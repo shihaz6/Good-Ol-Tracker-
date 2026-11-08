@@ -2,9 +2,6 @@ package com.goodol.tracker
 
 import android.Manifest
 import android.annotation.SuppressLint
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import kotlinx.coroutines.delay
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -15,10 +12,15 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.text.format.DateUtils
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -31,8 +33,11 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -42,29 +47,31 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     private val resumed = mutableIntStateOf(0)
@@ -82,209 +89,155 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable
-fun AppTheme(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
-    val ctx = LocalContext.current
-    val scheme = when {
-        Build.VERSION.SDK_INT >= 31 -> if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
-        dark -> darkColorScheme(primary = Color(0xFF5B9BEA))
-        else -> lightColorScheme(primary = Color(0xFF2A78D6))
-    }
-    MaterialTheme(colorScheme = scheme, content = content)
-}
-
-private fun fmtDur(ms: Long): String {
-    val m = ms / 60_000
-    return if (m >= 60) "${m / 60}h ${m % 60}m" else "${m}m"
-}
-
 private fun isXiaomi() = Build.MANUFACTURER.lowercase().let { it.contains("xiaomi") || it.contains("redmi") || it.contains("poco") }
 
 private fun ignoringBattery(ctx: Context): Boolean =
     (ctx.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(ctx.packageName)
 
+// ------------------------------------------------------------------ building blocks
+
+private val CardShape = RoundedCornerShape(20.dp)
+
+@Composable
+private fun Panel(
+    modifier: Modifier = Modifier,
+    container: Color = MaterialTheme.colorScheme.surfaceContainer,
+    border: Color? = MaterialTheme.colorScheme.outlineVariant,
+    content: @Composable () -> Unit,
+) {
+    Card(
+        modifier.fillMaxWidth(), shape = CardShape,
+        colors = CardDefaults.cardColors(containerColor = container),
+        border = border?.let { BorderStroke(1.dp, it) },
+    ) { Column(Modifier.padding(18.dp)) { content() } }
+}
+
+@Composable
+private fun Kicker(text: String, color: Color = MaterialTheme.colorScheme.onSurfaceVariant, modifier: Modifier = Modifier) =
+    Text(text.uppercase(), style = MaterialTheme.typography.labelSmall, color = color, modifier = modifier)
+
+@Composable
+private fun Muted(text: String, modifier: Modifier = Modifier) =
+    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
+
+@Composable
+private fun Bar(fraction: Float, color: Color, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(LocalSignal.current.track)) {
+        Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(6.dp).clip(CircleShape).background(color))
+    }
+}
+
+@Composable
+private fun Dot(color: Color, size: Int = 8) = Box(Modifier.size(size.dp).clip(CircleShape).background(color))
+
+// ------------------------------------------------------------------ the screen
+
 @Composable
 fun Screen(resumeTick: Int) {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
-    val scope = rememberCoroutineScope()
     var access by remember { mutableStateOf(Usage.hasAccess(ctx)) }
     var paired by remember { mutableStateOf(prefs.paired) }
-    var pair by remember { mutableStateOf<PairState>(PairState.Idle) }
-    var syncing by remember { mutableStateOf(false) }
-    var syncMsg by remember { mutableStateOf<String?>(null) }
     var today by remember { mutableStateOf<Triple<Long, Int, List<Pair<String, Long>>>?>(null) }
-    var battery by remember { mutableStateOf(ignoringBattery(ctx)) }
     var tick by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(resumeTick, tick) {
         access = Usage.hasAccess(ctx)
         paired = prefs.paired
-        battery = ignoringBattery(ctx)
         if (access) today = withContext(Dispatchers.IO) { runCatching { Usage.today(ctx) }.getOrNull() }
     }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
-            Modifier.safeDrawingPadding().verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.safeDrawingPadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Good ol Tracker", fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
-            Text("Sends which apps you use and when to your PC's tracker. Never what's inside them.",
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-            // 1. Usage access
-            StepCard("1", "Usage access", done = access) {
-                if (access) Text("Allowed. The app can read which apps you used.")
-                else {
-                    Text("Android needs your OK before an app can read app usage. Find Good ol Tracker in the list and switch it on.")
-                    Spacer(Modifier.height(8.dp))
-                    Button(onClick = { ctx.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }) { Text("Allow usage access") }
-                }
-            }
-
-            // 2. Connect to the PC
-            StepCard("2", "Your PC", done = paired) {
-                if (paired) {
-                    Text("Connected to ${prefs.pcName ?: "your PC"}")
-                    val last = prefs.lastSyncMs
-                    Text(
-                        if (last > 0) "Last sync " + DateUtils.getRelativeTimeSpanString(last) else "Waiting for the first sync…",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    prefs.lastError?.let {
-                        Text("Last try: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                    }
-                    syncMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Button(enabled = !syncing && access, onClick = {
-                            syncing = true; syncMsg = null
-                            scope.launch {
-                                syncMsg = withContext(Dispatchers.IO) {
-                                    try { "Sent ${Net.sync(ctx, prefs)} app sessions." }
-                                    catch (e: Exception) { prefs.lastError = e.message; "Couldn't sync: ${e.message}" }
-                                }
-                                syncing = false; tick++
-                            }
-                        }) { Text(if (syncing) "Syncing…" else "Sync now") }
-                        TextButton(onClick = { prefs.forget(); paired = false; pair = PairState.Idle }) { Text("Disconnect") }
-                    }
-                } else {
-                    when (val s = pair) {
-                        PairState.Idle -> {
-                            Text("Connect the laptop to this phone's hotspot (or the same Wi-Fi) with the tracker running, then:")
-                            Spacer(Modifier.height(8.dp))
-                            Button(enabled = access, onClick = {
-                                scope.launch { Pairing.run(ctx) { st -> scope.launch { pair = st; if (st is PairState.Done) { paired = true; tick++ } } } }
-                            }) { Text("Connect to PC") }
-                        }
-                        PairState.Searching -> Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(10.dp)); Text("Looking for your PC…")
-                        }
-                        is PairState.Waiting -> Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                            Text("On the PC dashboard (Phone card), allow the request showing this code:", textAlign = TextAlign.Center)
-                            Text(s.code, fontSize = 44.sp, fontWeight = FontWeight.Bold, letterSpacing = 8.sp,
-                                modifier = Modifier.padding(vertical = 8.dp))
-                            Text("Found ${s.pcName}", style = MaterialTheme.typography.bodySmall)
-                            Spacer(Modifier.height(8.dp))
-                            LinearProgressIndicator(Modifier.fillMaxWidth())
-                        }
-                        is PairState.Failed -> {
-                            Text(s.message, color = MaterialTheme.colorScheme.error)
-                            Spacer(Modifier.height(8.dp))
-                            OutlinedButton(onClick = { pair = PairState.Idle }) { Text("Try again") }
-                        }
-                        PairState.Done -> Text("Connected.")
-                    }
-                }
-            }
-
-            // Focus mode
+            Header(paired, prefs.lastSyncMs, prefs.lastError)
+            today?.let { TodayCard(it, prefs) }
             FocusCard(tick) { tick++ }
-
-            // Goals, limits, bedtime (settings come from the PC dashboard)
             RulesCard(tick)
+            Kicker("Setup", modifier = Modifier.padding(top = 6.dp, start = 4.dp))
+            SetupSection(access, paired, resumeTick, onChange = { tick++ }, onPaired = { paired = true; tick++ })
+            Muted("Sends which apps you use and when to your PC's tracker. Never what's inside them.",
+                Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
+        }
+    }
+}
 
-            // Adult content filter (Private DNS)
-            AdultFilterCard(resumeTick)
-
-            // Blocking + alerts setup
-            val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { tick++ }
-            val blocking = Focus.blockingEnabled(ctx)
-            val notify = Focus.canNotify(ctx)
-            StepCard("★", "Blocking and alerts", done = blocking && notify) {
-                if (blocking) Text("App blocking is on. Distracting apps close during focus sessions.")
-                else {
-                    Text("To block apps during focus, switch on \"Good ol Tracker focus mode\" in Accessibility. " +
-                        "It only sees which app is open, never what's on the screen.")
-                    Spacer(Modifier.height(4.dp))
-                    Text("If Android says it's restricted: App info → ⋮ (top right) → Allow restricted settings, then try again.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("Open Accessibility") }
-                        OutlinedButton(onClick = {
-                            ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}")))
-                        }) { Text("App info") }
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                if (notify) Text("Distraction alerts can show here (\"25 min on Instagram\").")
-                else OutlinedButton(onClick = {
-                    if (Build.VERSION.SDK_INT >= 33) notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                }) { Text("Allow alert notifications") }
-            }
-
-            // 3. Keep it running (Xiaomi kills background apps)
-            if (isXiaomi() || !battery) {
-                StepCard("3", "Keep it running", done = battery) {
-                    Text("So syncs happen in the background. Missed ones aren't lost: it catches up when you open the app.")
-                    Spacer(Modifier.height(8.dp))
-                    if (!battery) OutlinedButton(onClick = { requestBattery(ctx) }) { Text("Battery: no restrictions") }
-                    if (isXiaomi()) {
-                        OutlinedButton(onClick = { openXiaomiAutostart(ctx) }) { Text("Allow autostart") }
-                        Text("Also: in Recents, long-press Good ol Tracker and tap the lock.",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
-
-            // Today on this phone
-            today?.let { (total, unlocks, top) ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Today on this phone", fontWeight = FontWeight.SemiBold)
-                        Row(verticalAlignment = Alignment.Bottom) {
-                            Text(fmtDur(total), fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
-                            Spacer(Modifier.width(8.dp))
-                            Text("· $unlocks unlocks", color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(bottom = 6.dp))
-                        }
-                        val max = top.maxOfOrNull { it.second }?.coerceAtLeast(1) ?: 1
-                        top.forEach { (name, ms) ->
-                            Spacer(Modifier.height(6.dp))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(name, maxLines = 1); Text(fmtDur(ms), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            LinearProgressIndicator(progress = { ms.toFloat() / max }, modifier = Modifier.fillMaxWidth().height(4.dp))
-                        }
-                    }
-                }
+@Composable
+private fun Header(paired: Boolean, lastSync: Long, lastError: String?) {
+    val sig = LocalSignal.current
+    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Image(painterResource(R.drawable.ic_launcher), contentDescription = null, modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Good ol Tracker", style = MaterialTheme.typography.headlineSmall)
+            val fresh = paired && lastSync > 0 && System.currentTimeMillis() - lastSync < 20 * 60_000
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Dot(when { !paired -> MaterialTheme.colorScheme.outline; fresh -> sig.success; else -> sig.warning }, 7)
+                Spacer(Modifier.width(6.dp))
+                Muted(when {
+                    !paired -> "Not connected to your PC"
+                    lastSync == 0L -> "Connected · waiting for first sync"
+                    fresh && System.currentTimeMillis() - lastSync < 60_000 -> "Synced just now"
+                    fresh -> "Synced " + DateUtils.getRelativeTimeSpanString(lastSync)
+                    else -> "PC not reachable · last sync " + DateUtils.getRelativeTimeSpanString(lastSync)
+                })
             }
         }
     }
 }
 
 @Composable
+private fun TodayCard(data: Triple<Long, Int, List<Pair<String, Long>>>, prefs: Prefs) {
+    val (total, unlocks, top) = data
+    val scheme = MaterialTheme.colorScheme
+    val pc = runCatching { JSONObject(prefs.today) }.getOrDefault(JSONObject())
+    val fresh = System.currentTimeMillis() - prefs.todayAtMs < 3 * 3600_000
+    val productive = pc.optLong("productive", -1).takeIf { it >= 0 && fresh }
+    Panel {
+        Kicker("Today")
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                Text(Guard.fmt(total), fontSize = 34.sp, fontWeight = FontWeight.SemiBold, lineHeight = 36.sp)
+                Muted("on the phone")
+                Muted("$unlocks unlocks")
+            }
+            Column(Modifier.weight(1f)) {
+                Text(productive?.let { Guard.fmt(it * 1000) } ?: "–", fontSize = 34.sp, fontWeight = FontWeight.SemiBold,
+                    lineHeight = 36.sp, color = scheme.primary)
+                Muted("productive")
+                Muted("PC + phone")
+            }
+        }
+        if (top.isNotEmpty()) {
+            Spacer(Modifier.height(14.dp))
+            val max = top.maxOf { it.second }.coerceAtLeast(1)
+            top.forEach { (name, ms) ->
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(name, Modifier.width(110.dp), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium)
+                    Bar(ms.toFloat() / max, scheme.primary.copy(alpha = 0.55f), Modifier.weight(1f))
+                    Text(Guard.fmt(ms), Modifier.width(58.dp), textAlign = TextAlign.End,
+                        style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------ focus
+
+@Composable
 fun FocusCard(tick: Int, onChange: () -> Unit) {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     val scope = rememberCoroutineScope()
+    val scheme = MaterialTheme.colorScheme
     var busy by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
-    var left by remember { mutableStateOf(0L) }
+    var left by remember { mutableLongStateOf(0L) }
     var armed by remember { mutableStateOf(false) }
 
     LaunchedEffect(tick) {
@@ -296,20 +249,25 @@ fun FocusCard(tick: Int, onChange: () -> Unit) {
     }
     LaunchedEffect(armed) { if (armed) { delay(4000); armed = false } }
 
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
-        containerColor = if (left > 0) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.padding(16.dp)) {
-            Text("Focus mode", fontWeight = FontWeight.SemiBold)
-            if (left > 0) {
-                val h = left / 3600; val m = (left % 3600) / 60; val s = left % 60
-                Text(if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s),
-                    fontSize = 40.sp, fontWeight = FontWeight.SemiBold)
+    val active = left > 0
+    Panel(container = if (active) scheme.primaryContainer else scheme.surfaceContainer,
+        border = if (active) null else scheme.outlineVariant) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (active) { Dot(scheme.primary); Spacer(Modifier.width(8.dp)) }
+            Kicker(if (active) "Focusing" else "Focus mode", if (active) scheme.primary else scheme.onSurfaceVariant)
+        }
+        if (active) {
+            val total = (prefs.focusEndSec - prefs.focusStartSec).coerceAtLeast(1.0)
+            val h = left / 3600; val m = (left % 3600) / 60; val s = left % 60
+            Text(if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s),
+                fontSize = 48.sp, fontWeight = FontWeight.SemiBold, color = scheme.onPrimaryContainer)
+            Bar((1 - left / total).toFloat(), scheme.primary)
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(buildString {
-                    append("left")
-                    if (prefs.focusLabel.isNotBlank()) append(" · ${prefs.focusLabel}")
+                    append(if (prefs.focusLabel.isNotBlank()) prefs.focusLabel else "Distracting apps are blocked")
                     if (prefs.focusLocal) append(" · phone only")
-                }, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(8.dp))
+                }, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = scheme.onPrimaryContainer)
                 TextButton(enabled = !busy, onClick = {
                     if (!armed) { armed = true; return@TextButton }
                     busy = true
@@ -317,128 +275,280 @@ fun FocusCard(tick: Int, onChange: () -> Unit) {
                         msg = withContext(Dispatchers.IO) { Focus.stop(ctx) }
                         busy = false; armed = false; onChange()
                     }
-                }) { Text(if (armed) "Sure? Tap again to end it" else "End early") }
-            } else {
-                Text("Blocks Facebook, Instagram, YouTube and your other distracting apps here, and distracting sites on the PC.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(25, 50, 90).forEach { mins ->
-                        OutlinedButton(enabled = !busy, modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp), onClick = {
-                            busy = true
-                            scope.launch {
-                                msg = withContext(Dispatchers.IO) { Focus.start(ctx, mins) }
-                                busy = false; onChange()
-                            }
-                        }) { Text("$mins min", maxLines = 1) }
+                }, colors = ButtonDefaults.textButtonColors(contentColor = if (armed) scheme.error else scheme.onPrimaryContainer)) {
+                    Text(if (armed) "Tap again to end" else "End early")
+                }
+            }
+        } else {
+            Spacer(Modifier.height(4.dp))
+            Muted("Blocks Facebook, Instagram, YouTube and other distracting apps here, and distracting sites on the PC.")
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(25, 50, 90).forEachIndexed { i, mins ->
+                    val onClick = {
+                        busy = true
+                        scope.launch {
+                            msg = withContext(Dispatchers.IO) { Focus.start(ctx, mins) }
+                            busy = false; onChange()
+                        }
+                        Unit
+                    }
+                    val pad = PaddingValues(horizontal = 4.dp, vertical = 12.dp)
+                    if (i == 0) Button(onClick, Modifier.weight(1f), enabled = !busy, contentPadding = pad, shape = RoundedCornerShape(14.dp)) {
+                        Text("$mins min", maxLines = 1, fontWeight = FontWeight.SemiBold)
+                    } else OutlinedButton(onClick, Modifier.weight(1f), enabled = !busy, contentPadding = pad, shape = RoundedCornerShape(14.dp)) {
+                        Text("$mins min", maxLines = 1)
                     }
                 }
             }
-            msg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
+        msg?.let { Spacer(Modifier.height(6.dp)); Muted(it) }
     }
 }
+
+// ------------------------------------------------------------------ goals, limits, bedtime
 
 @Composable
 fun RulesCard(tick: Int) {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
+    val scheme = MaterialTheme.colorScheme
+    val sig = LocalSignal.current
     var usage by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     LaunchedEffect(tick) { usage = withContext(Dispatchers.IO) { runCatching { Guard.usageToday(ctx, fresh = true) }.getOrDefault(emptyMap()) } }
     val s = Guard.settings(prefs)
-    val today = runCatching { org.json.JSONObject(prefs.today) }.getOrDefault(org.json.JSONObject())
+    val today = runCatching { JSONObject(prefs.today) }.getOrDefault(JSONObject())
 
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Today's rules", fontWeight = FontWeight.SemiBold)
-            today.optJSONArray("goals")?.let { goals ->
-                for (i in 0 until goals.length()) {
-                    val g = goals.getJSONObject(i)
-                    val target = g.optLong("target").coerceAtLeast(1)
-                    val v = g.optLong("today")
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(g.optString("label"))
-                        Text(buildString {
-                            append(if (g.optBoolean("over")) "✗ " else if (g.optBoolean("met_today")) "✓ " else "")
-                            append("${Guard.fmt(v * 1000)} / ${Guard.fmt(target * 1000)}")
-                            if (g.optInt("streak") > 0) append("  🔥${g.optInt("streak")}")
-                        }, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Panel {
+        Kicker("Goals & limits")
+        today.optJSONArray("goals")?.let { goals ->
+            for (i in 0 until goals.length()) {
+                val g = goals.getJSONObject(i)
+                val target = g.optLong("target").coerceAtLeast(1)
+                val v = g.optLong("today")
+                val over = g.optBoolean("over"); val met = g.optBoolean("met_today")
+                val atLeast = g.optString("kind") == "productive_min"
+                val color = when { over -> scheme.error; met && atLeast -> sig.success; atLeast -> scheme.primary; else -> sig.success }
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(g.optString("label"), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    if (g.optInt("streak") > 0) {
+                        Text("🔥 ${g.optInt("streak")}", style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.clip(CircleShape).background(sig.warningContainer).padding(horizontal = 8.dp, vertical = 2.dp),
+                            color = sig.onWarningContainer)
+                        Spacer(Modifier.width(8.dp))
                     }
-                    LinearProgressIndicator(progress = { (v.toFloat() / target).coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth().height(4.dp),
-                        color = if (g.optBoolean("over")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+                    Text(when {
+                        over -> "${Guard.fmt((v - target) * 1000)} over"
+                        met && atLeast -> "Done ✓"
+                        atLeast -> "${Guard.fmt((target - v) * 1000)} to go"
+                        else -> "${Guard.fmt((target - v) * 1000)} left"
+                    }, style = MaterialTheme.typography.bodySmall, color = if (over) scheme.error else scheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.height(6.dp))
+                Bar(v.toFloat() / target, color)
+            }
+        } ?: Muted("Goals show up after the first sync with your PC.", Modifier.padding(top = 8.dp))
+
+        s.optJSONObject("limits")?.let { lim ->
+            val keys = lim.keys().asSequence().toList()
+            if (keys.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                Kicker("Daily app limits")
+                keys.forEach { pkg ->
+                    val limMs = lim.optInt(pkg) * 60_000L
+                    val used = usage[pkg] ?: 0L
+                    val frac = used.toFloat() / limMs
+                    val color = when { frac >= 1f -> scheme.error; frac >= 0.8f -> sig.warning; else -> sig.success }
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth()) {
+                        Text(Usage.label(ctx, pkg), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        Text(if (frac >= 1f) "Blocked until midnight" else "${Guard.fmt(used)} of ${Guard.fmt(limMs)}",
+                            style = MaterialTheme.typography.bodySmall, color = if (frac >= 1f) scheme.error else scheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Bar(frac, color)
                 }
             }
-            s.optJSONObject("limits")?.let { lim ->
-                val keys = lim.keys().asSequence().toList()
-                if (keys.isNotEmpty()) {
-                    Spacer(Modifier.height(4.dp))
-                    Text("Daily limits", style = MaterialTheme.typography.labelLarge)
-                    keys.forEach { pkg ->
-                        val limMs = lim.optInt(pkg) * 60_000L
-                        val used = usage[pkg] ?: 0L
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(Usage.label(ctx, pkg))
-                            Text("${Guard.fmt(used)} / ${Guard.fmt(limMs)}",
-                                color = if (used >= limMs) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
+        }
+        s.optJSONObject("bedtime")?.let { b ->
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(scheme.surfaceContainerHigh).padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text("🌙", fontSize = 18.sp)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(if (b.optBoolean("enabled")) "Bedtime ${b.optString("start")} – ${b.optString("end")}" else "Bedtime is off",
+                        style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Muted(if (b.optBoolean("enabled")) "Social and video apps lock overnight" else "Turn it on from the PC dashboard")
                 }
             }
-            s.optJSONObject("bedtime")?.let { b ->
-                Text(if (b.optBoolean("enabled")) "Bedtime: ${b.optString("start")}–${b.optString("end")} (social and video apps lock)"
-                    else "Bedtime mode is off", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.height(10.dp))
+        Muted("Change goals, limits and bedtime on the PC dashboard.")
+    }
+}
+
+// ------------------------------------------------------------------ setup
+
+/** Done = one compact line with a mint check. Not done = an amber-edged card with the steps. */
+@Composable
+fun SetupItem(title: String, done: Boolean, summary: String, content: @Composable () -> Unit) {
+    val sig = LocalSignal.current
+    val scheme = MaterialTheme.colorScheme
+    if (done) {
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(scheme.surfaceContainerLow)
+            .padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(22.dp).clip(CircleShape).background(sig.successContainer), contentAlignment = Alignment.Center) {
+                Text("✓", color = sig.success, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
-            Text("Change these on the PC dashboard (\"Limits, bedtime, schedule and goals\").",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Muted(summary)
+            }
+        }
+    } else {
+        Panel(container = scheme.surfaceContainer, border = sig.warning.copy(alpha = 0.55f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(22.dp).clip(CircleShape).background(sig.warningContainer), contentAlignment = Alignment.Center) {
+                    Text("!", color = sig.warning, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(12.dp))
+                Text(title, style = MaterialTheme.typography.titleMedium)
+            }
+            Spacer(Modifier.height(10.dp))
+            content()
         }
     }
 }
 
 @Composable
-fun AdultFilterCard(resumeTick: Int) {
+private fun SetupSection(access: Boolean, paired: Boolean, resumeTick: Int, onChange: () -> Unit, onPaired: () -> Unit) {
     val ctx = LocalContext.current
-    var host by remember { mutableStateOf<String?>(null) }
-    var other by remember { mutableStateOf<String?>(null) }
+    val prefs = remember { Prefs(ctx) }
+    val scope = rememberCoroutineScope()
+    var pair by remember { mutableStateOf<PairState>(PairState.Idle) }
+    var syncing by remember { mutableStateOf(false) }
+    var syncMsg by remember { mutableStateOf<String?>(null) }
+    val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { onChange() }
+    var dnsHost by remember { mutableStateOf<String?>(null) }
+    var dnsOther by remember { mutableStateOf<String?>(null) }
     var copied by remember { mutableStateOf(false) }
-    LaunchedEffect(resumeTick) { host = Dns.filterHost(ctx); other = Dns.activeHost(ctx) }
-    StepCard("🛡", "Adult content filter", done = host != null) {
-        if (host != null) {
-            Text("On. Adult sites are blocked in every browser and app on this phone (via $host).")
-        } else {
-            Text("Blocks adult sites in every browser and app, using Android's Private DNS with a family filter. " +
-                "Nothing on your screen is read.")
-            other?.let { Text("Private DNS is set to $it right now, which doesn't filter adult content.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-            Spacer(Modifier.height(6.dp))
-            Text("1. Copy the address below.\n2. Settings → Connection & sharing → Private DNS → Private DNS provider hostname.\n3. Paste it and Save.",
-                style = MaterialTheme.typography.bodySmall)
-            Text(Dns.FAMILY_HOST, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(vertical = 6.dp))
+    LaunchedEffect(resumeTick) { dnsHost = Dns.filterHost(ctx); dnsOther = Dns.activeHost(ctx) }
+    val blocking = Focus.blockingEnabled(ctx)
+    val notify = Focus.canNotify(ctx)
+    val battery = ignoringBattery(ctx)
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SetupItem("Usage access", access, "Allowed") {
+            Muted("Android needs your OK before an app can read app usage. Find Good ol Tracker in the list and switch it on.")
+            Spacer(Modifier.height(10.dp))
+            Button(onClick = { ctx.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }) { Text("Allow usage access") }
+        }
+
+        if (paired) {
+            Panel(container = MaterialTheme.colorScheme.surfaceContainerLow, border = null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Connected to ${prefs.pcName ?: "your PC"}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Muted(syncMsg ?: prefs.lastError?.let { "Last try: $it" } ?: "Syncs every minute while you use the phone")
+                    }
+                    OutlinedButton(enabled = !syncing && access, onClick = {
+                        syncing = true; syncMsg = null
+                        scope.launch {
+                            syncMsg = withContext(Dispatchers.IO) {
+                                try { "Sent ${Net.sync(ctx, prefs)} app sessions" }
+                                catch (e: Exception) { prefs.lastError = e.message; "Couldn't sync: ${e.message}" }
+                            }
+                            syncing = false; onChange()
+                        }
+                    }) { Text(if (syncing) "Syncing…" else "Sync now") }
+                }
+                TextButton(onClick = { prefs.forget(); pair = PairState.Idle; onChange() }, contentPadding = PaddingValues(0.dp)) {
+                    Text("Disconnect", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        } else SetupItem("Connect to your PC", false, "") {
+            when (val s = pair) {
+                PairState.Idle -> {
+                    Muted("Connect the laptop to this phone's hotspot (or the same Wi-Fi) with the tracker running, then:")
+                    Spacer(Modifier.height(10.dp))
+                    Button(enabled = access, onClick = {
+                        scope.launch { Pairing.run(ctx) { st -> scope.launch { pair = st; if (st is PairState.Done) onPaired() } } }
+                    }) { Text("Connect to PC") }
+                }
+                PairState.Searching -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp)); Text("Looking for your PC…")
+                }
+                is PairState.Waiting -> Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    Muted("On the PC dashboard (Phone card), allow the request with this code:")
+                    Text(s.code, fontSize = 44.sp, fontWeight = FontWeight.Bold, letterSpacing = 8.sp,
+                        color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(vertical = 8.dp))
+                    Muted("Found ${s.pcName}")
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+                is PairState.Failed -> {
+                    Text(s.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(onClick = { pair = PairState.Idle }) { Text("Try again") }
+                }
+                PairState.Done -> Text("Connected.")
+            }
+        }
+
+        SetupItem("App blocking", blocking, "On · it only sees which app is open") {
+            Muted("Switch on \"Good ol Tracker focus mode\" in Accessibility to block apps during focus, at bedtime and over limits. " +
+                "It only sees which app is open, never what's on the screen.")
+            Spacer(Modifier.height(4.dp))
+            Muted("If Android says it's restricted: App info → ⋮ → Allow restricted settings, then try again.")
+            Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { Dns.copyHost(ctx); copied = true }) { Text(if (copied) "Copied" else "Copy address") }
+                Button(onClick = { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("Open Accessibility") }
+                OutlinedButton(onClick = {
+                    ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}")))
+                }) { Text("App info") }
+            }
+        }
+
+        SetupItem("Alerts", notify, "Distraction alerts and limit warnings can show") {
+            Muted("For \"25 min on Instagram\" nudges, limit warnings and the bedtime reminder.")
+            Spacer(Modifier.height(10.dp))
+            Button(onClick = { if (Build.VERSION.SDK_INT >= 33) notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }) {
+                Text("Allow notifications")
+            }
+        }
+
+        SetupItem("Adult content filter", dnsHost != null, "On · via ${dnsHost ?: ""}") {
+            Muted("Blocks adult sites in every browser and app, using Android's Private DNS with a family filter. Nothing on your screen is read.")
+            dnsOther?.let {
+                Spacer(Modifier.height(4.dp))
+                Text("Private DNS is set to $it right now, which doesn't filter adult content.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            Spacer(Modifier.height(10.dp))
+            Text("1. Copy the address  2. Settings → Connection & sharing → Private DNS → Private DNS provider hostname  3. Paste and Save",
+                style = MaterialTheme.typography.bodySmall)
+            Text(Dns.FAMILY_HOST, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(vertical = 8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { Dns.copyHost(ctx); copied = true }) { Text(if (copied) "Copied ✓" else "Copy address") }
                 OutlinedButton(onClick = { Dns.openSettings(ctx) }) { Text("Open settings") }
             }
         }
-    }
-}
 
-@Composable
-fun StepCard(n: String, title: String, done: Boolean, content: @Composable () -> Unit) {
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (done) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.secondaryContainer),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(if (done) "✓" else n, fontWeight = FontWeight.Bold,
-                    color = if (done) Color(0xFF1BAF7A) else MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(10.dp))
-                Text(title, fontWeight = FontWeight.SemiBold)
+        if (isXiaomi() || !battery) {
+            SetupItem("Keep it running", battery, "Battery: no restrictions") {
+                Muted("So syncs and blocking keep working in the background. Missed syncs catch up when you open the app.")
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!battery) Button(onClick = { requestBattery(ctx) }) { Text("No restrictions") }
+                    if (isXiaomi()) OutlinedButton(onClick = { openXiaomiAutostart(ctx) }) { Text("Autostart") }
+                }
+                if (isXiaomi()) Muted("Also: in Recents, long-press Good ol Tracker and tap the lock.", Modifier.padding(top = 8.dp))
             }
-            Spacer(Modifier.height(6.dp))
-            content()
         }
     }
 }
