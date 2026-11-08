@@ -1,9 +1,11 @@
-"""Weekly AI summary via Groq.
+"""Weekly AI summary via Groq: a coach's read of your week and a plan for the next one.
 
 What is sent (see build_payload): totals and patterns only - hours per category and
 day, productive hours by time of day, focus/switch stats, top app/site NAMES, top
-topic WORDS and the same totals for the previous period. Never sent: page text, page
-titles, URLs, search queries, window titles.
+topic WORDS, phone time / unlocks / top phone app names, pickups while studying, sleep
+times, goals met, daily limits exceeded, your subject names with hours and exam
+countdowns, focus-mode sessions, and the same totals for the previous period. Never
+sent: page text, page titles, URLs, search queries, window titles.
 
     python desktop/weekly.py --preview          # print exactly what would be sent
     python desktop/weekly.py                    # last 7 days -> Groq -> saved + printed
@@ -21,7 +23,11 @@ from datetime import date, timedelta
 import analytics
 import categorize
 import db
+import focus
+import insights
 import keys
+import subjects
+import wellbeing
 
 log = logging.getLogger("tracker")
 
@@ -31,21 +37,35 @@ PREFERRED_MODELS = ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gp
 SKIP_MODEL_WORDS = ("whisper", "guard", "tts", "playai", "embed", "safeguard")
 MIN_ACTIVE_SECONDS = 10 * 60  # don't ask for a summary of almost nothing
 
-SYSTEM_PROMPT = """You are a friendly, practical productivity coach. You receive one person's \
-computer-usage statistics for a period as JSON. Use ONLY these numbers; never invent data, \
-apps, or topics. Speak to the person directly ("you"). Write durations like "3h 20m".
+SYSTEM_PROMPT = """You are a warm but direct study and focus coach for a university computing \
+student. You receive their tracked stats for a period as JSON: PC and phone time, categories, \
+focus, sleep, phone pickups while studying, daily goals, daily app limits, subjects with exam \
+dates and weekly targets. Use ONLY these numbers; never invent data, apps, subjects or topics. \
+Speak to them directly ("you"). Write durations like "3h 20m". Fields that are null or missing \
+weren't tracked: don't mention them. Check "tracking": if the PC was tracked on fewer days than \
+the phone, PC-based numbers (productive share, active hours) are partial, so don't present them \
+as the whole picture; previous_period is null when it wasn't really tracked: then don't compare.
+
+The only tracker settings that exist (suggest nothing else): daily app limits (phone app + its \
+website share one budget), bedtime with a wind-down reminder, scheduled focus (days + times), \
+focus mode (25/50/90 min, blocks distracting apps and sites), daily goals (productive at least, \
+phone at most, a category at most), subjects with exam dates and weekly targets. Ordinary phone \
+features (Do Not Disturb, charging the phone outside the bedroom) are fine to mention too.
 
 Format (Markdown):
-## Overview
-2-3 sentences: how the period went overall.
-## Patterns
-3-5 bullet points: peak productive hours, focus streaks, context switching, standout days or apps.
-## Compared with the previous period
-1-3 bullet points. Leave this section out if previous_period is null.
-## Try this week
-3 specific, doable suggestions, each tied to a number above.
+## How it went
+2-3 sentences: the honest headline, including the biggest win and the biggest leak of time.
+## What stood out
+3-5 bullets, each with a number: e.g. the nearest exam vs hours studied for it, phone time and \
+which apps, pickups while studying, sleep (bedtime, short nights), goals met/missed and streaks, \
+peak productive hours. Compare with previous_period where it exists.
+## Your plan for next week
+3-4 concrete actions, most important first. Prioritise the nearest exam and the subject furthest \
+behind its weekly target, then the goal missed most often. Each action says what, when and how \
+much (e.g. "Three 50-minute focus sessions on DBMS before Thursday: exam in 9 days, 2h of 6h done"). \
+Where it helps, suggest a tracker setting by name: a daily limit, bedtime, scheduled focus, a goal.
 
-Keep it under 280 words."""
+Be kind but don't sugar-coat. Keep it under 330 words."""
 
 
 class SummaryError(Exception):
@@ -101,12 +121,106 @@ def build_payload(conn, start_day: date, end_day: date, rules=None) -> dict:
         ],
         "top_topic_words": [t["term"] for t in cur["topics"][:15]],
         "number_of_searches": cur["search_count"],
-        "previous_period": None if not prev["totals"]["active"] else {
+        # A barely-tracked previous period (before install) would only make misleading comparisons.
+        "previous_period": None if prev["totals"]["active"] < max(5 * 3600, 0.2 * cur["totals"]["active"]) else {
             "active_hours": _h(prev["totals"]["active"]),
             "productive_hours": _h(prev["totals"]["productive"]),
             "hours_by_category": {k: _h(v) for k, v in prev["totals"]["by_category"].items()},
+            "phone_hours": _h(prev["phone"]["seconds"]) if prev["phone"]["seconds"] else None,
         },
+        **coach_context(conn, start_day, end_day, rules, cur),
     }
+
+
+def coach_context(conn, start_day: date, end_day: date, rules, cur) -> dict:
+    """The newer data for the coach: phone, sleep, pickups, goals, limits, subjects, focus.
+    Still totals and names only: no page text, titles, URLs or searches."""
+    days = (end_day - start_day).days + 1
+    s0, s1 = analytics._midnight(start_day), analytics._midnight(end_day + timedelta(days=1))
+    out = {}
+
+    # How many days each device was actually tracked (30+ min of activity).
+    pc_days, phone_days = set(), set()
+    pc_secs, ph_secs = {}, {}
+    for it in categorize.categorise(conn, s0, s1, rules):
+        d = date.fromtimestamp(it.start)
+        bucket = ph_secs if it.source == "phone" else pc_secs if it.source in ("desktop", "browser") else None
+        if bucket is not None:
+            bucket[d] = bucket.get(d, 0.0) + it.seconds
+    pc_days = {d for d, s in pc_secs.items() if s >= 1800}
+    phone_days = {d for d, s in ph_secs.items() if s >= 1800}
+    out["tracking"] = {"days_in_period": days, "pc_days_tracked": len(pc_days), "phone_days_tracked": len(phone_days)}
+
+    p = cur["phone"]
+    if p["seconds"]:
+        phone_apps = [a for a in cur["top_apps"] if a["kind"] == "phone"][:6]
+        intr = insights.interruptions(conn, s0, s1, rules)
+        out["phone"] = {
+            "hours_per_day": _h(p["seconds"] / days), "unlocks_per_day": round(p["unlocks"] / days, 1),
+            "top_apps": [{"name": a["label"], "hours": _h(a["seconds"])} for a in phone_apps],
+            "pickups_while_studying": intr["count"], "pickups_per_study_hour": intr["per_study_hour"],
+            "long_phone_breaks_during_study": intr["breaks"],
+        }
+
+    sl = insights.sleep(conn, end_day, min(days, 14), rules)
+    known = [n for n in sl["nights"] if n["seconds"]]
+    if known:
+        out["sleep"] = {"avg_hours": _h(sl["avg_seconds"]), "usual_bedtime": sl["avg_bedtime"],
+                        "usual_wake": sl["avg_wake"], "nights_tracked": len(known),
+                        "nights_under_7h": sum(1 for n in known if n["seconds"] < 7 * 3600)}
+
+    goals = []
+    for g in wellbeing.goals(conn, today=end_day, rules=rules):
+        hist = [h for h in g["history"][-days:] if h["met"] is not None and (h["final"] or h["met"])]
+        if hist:
+            goals.append({"goal": g["label"], "met_days": sum(1 for h in hist if h["met"]), "of_days": len(hist),
+                          "current_streak": g["streak"]})
+    if goals:
+        out["daily_goals"] = goals
+
+    out.update(_limits_context(conn, start_day, end_day, rules))
+
+    subs = subjects.summary(conn, start_day, end_day, rules, today=end_day)
+    if subs["subjects"]:
+        out["subjects"] = [{"name": x["name"], "hours_this_period": _h(x["seconds"]),
+                            "hours_this_week": _h(x["week_seconds"]),
+                            "weekly_target_hours": _h(x["weekly_minutes"] * 60) if x["weekly_minutes"] else None,
+                            "days_to_exam": x["days_left"] if x["days_left"] is not None and x["days_left"] >= 0 else None}
+                           for x in subs["subjects"]]
+        out["study_time_not_matched_to_a_subject_hours"] = _h(subs["untagged_seconds"])
+
+    f = focus.history(conn, s0, s1, rules)
+    if f["sessions"]:
+        out["focus_mode"] = {"sessions": len(f["sessions"]), "finished": f["completed"], "ended_early": f["stopped"],
+                             "hours": _h(f["focused_seconds"]), "blocked_attempts": f["blocked"]}
+    bed = wellbeing.settings()["bedtime"]
+    out["tracker_settings"] = {"bedtime": f"{bed['start']}-{bed['end']}" if bed["enabled"] else "off",
+                               "scheduled_focus_slots": len(wellbeing.settings()["schedules"])}
+    return out
+
+
+def _limits_context(conn, start_day, end_day, rules) -> dict:
+    """On how many days each daily limit (phone app + its website together) was exceeded."""
+    lim = wellbeing.settings()["limits"]
+    if not lim:
+        return {}
+    items = categorize.categorise(conn, analytics._midnight(start_day), analytics._midnight(end_day + timedelta(days=1)), rules)
+    rows = []
+    for pkg, minutes in lim.items():
+        domains = wellbeing.APP_SITES.get(pkg, [])
+        per_day, label = {}, None
+        for it in items:
+            if it.source == "phone" and it.title.lower() == pkg:
+                label = label or it.app
+            elif not (it.source == "browser" and wellbeing._on(it.app, domains) and it.category not in rules.productive):
+                continue
+            d = date.fromtimestamp(it.start)
+            per_day[d] = per_day.get(d, 0.0) + it.seconds
+        if per_day:
+            rows.append({"app": label or (domains[0] if domains else pkg), "limit_minutes": minutes,
+                         "days_over_limit": sum(1 for v in per_day.values() if v > minutes * 60),
+                         "avg_minutes_per_day": round(sum(per_day.values()) / 60 / ((end_day - start_day).days + 1))})
+    return {"daily_limits": rows} if rows else {}
 
 
 # --------------------------------------------------------------------- Groq
@@ -161,7 +275,7 @@ def generate(conn, start_day: date, end_day: date, rules=None, request=None) -> 
     reply = request(key, "/chat/completions", {
         "model": model,
         "temperature": 0.4,
-        "max_tokens": 1200,
+        "max_tokens": 1600,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": "My stats:\n```json\n" + json.dumps(payload, indent=1) + "\n```"},

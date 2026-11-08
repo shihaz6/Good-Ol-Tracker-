@@ -123,6 +123,26 @@ class GroqTest(Base):
         self.assertEqual({x["name"]: x["seconds"] for x in s["subjects"]}["DBMS"], 2400)
 
 
+class CoachPayloadTest(Base):
+    def test_payload_has_the_new_context_and_nothing_private(self):
+        import weekly
+        self.browse(at(9), at(10), "youtube.com", "SQL normalization full course", "https://www.youtube.com/watch?v=n")
+        self.conn.execute("INSERT INTO sessions (start_ts, end_ts, source, app, title, client_id) VALUES (?, ?, 'phone',"
+                          " 'com.facebook.katana', 'Facebook', 'p1')", (at(20), at(22)))
+        self.conn.commit()
+        p = weekly.build_payload(self.conn, DAY - timedelta(days=6), DAY, self.rules)
+        self.assertEqual(p["tracking"], {"days_in_period": 7, "pc_days_tracked": 1, "phone_days_tracked": 1})
+        self.assertEqual(p["phone"]["top_apps"][0]["name"], "Facebook")
+        self.assertEqual(p["daily_limits"][0], {"app": "Facebook", "limit_minutes": 60, "days_over_limit": 1,
+                                                "avg_minutes_per_day": 17})
+        dbms = next(s for s in p["subjects"] if s["name"] == "DBMS")
+        self.assertEqual((dbms["hours_this_period"], dbms["days_to_exam"], dbms["weekly_target_hours"]), (1.0, 12, 6.0))
+        self.assertIsNone(p["previous_period"])  # nothing tracked before: no comparison
+        text = json.dumps(p)
+        for private in ("youtube.com/watch", "SQL normalization full course"):
+            self.assertNotIn(private, text)
+
+
 class WeekTest(Base):
     def test_week_payload(self):
         self.browse(at(9), at(10), "youtube.com", "SQL normalization full course", "https://www.youtube.com/watch?v=n")

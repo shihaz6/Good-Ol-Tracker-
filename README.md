@@ -305,7 +305,7 @@ Two optional API keys, each in its own file in `data\` (gitignored) or an env va
 | Key | File | Used for | What leaves the PC |
 |---|---|---|---|
 | Voyage | `data\voyage_key.txt` (`VOYAGE_API_KEY`) | Categorising pages the rules can't decide | Each scanned page's title, channel, description, headings and first ~1,500 characters, once per page |
-| Groq | `data\groq_key.txt` (`GROQ_API_KEY`) | Weekly summary | Totals only: hours per category/day, focus stats, top app/site names, topic words. Never page text, titles, URLs or searches |
+| Groq | `data\groq_key.txt` (`GROQ_API_KEY`) | Weekly coach summary + plan | Totals and names only: hours per category/day, focus stats, top app/site and phone-app names, topic words, phone time/unlocks, pickups while studying, sleep times, goals met, limits exceeded, your subject names with hours and exam countdowns, focus-mode sessions, days tracked per device. Never page text, titles, URLs or searches |
 | Groq | same key | AI judge: Unsure pages, sites/apps with no rule | Unsure pages: site, tab/page title, channel, description, search words and the first 500 characters of text. Unruled sites/apps: the name and up to 3 titles. Once per item |
 
 - **AI categoriser** (`desktop/ai_categorize.py`): runs in the tracker's background every
