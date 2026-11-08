@@ -30,12 +30,14 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import categorize
 import db
 import focus
+import insights
 import nudge
+import subjects
 import wellbeing
 
 log =logging.getLogger("tracker")
@@ -256,12 +258,78 @@ def _today(conn, now):
     g = wellbeing.goals(conn, now=now)
     value = {"productive": next((x["today"] for x in g if x["kind"] == "productive_min"), None),
              "goals": [{k: x[k] for k in ("label", "today", "target", "met_today", "over", "streak", "kind")} for x in g]}
+    try:
+        today = date.fromtimestamp(now)
+        nx = subjects.summary(conn, today, today, today=today)["next_exam"]
+        value["next_exam"] = {k: nx[k] for k in ("name", "days_left", "week_seconds", "weekly_minutes")} if nx else None
+    except ValueError:
+        value["next_exam"] = None
     if value["productive"] is None:
         rules = categorize.Rules()
         d0 = datetime.combine(date.fromtimestamp(now), datetime.min.time()).timestamp()
         value["productive"] = round(sum(it.seconds for it in categorize.categorise(conn, d0, now, rules)
                                         if it.category in rules.productive))
     _today_cache.update(ts=now, value=value)
+    return value
+
+
+_week_cache = {"ts": 0.0, "value": None}
+
+
+def week_for_phone(conn, now=None) -> dict:
+    """The app's Week tab: last 7 days of productive vs phone time, goals, sleep, focus
+    sessions, subjects with exam countdowns, top phone apps and pickups during study."""
+    now = now or time.time()
+    if now - _week_cache["ts"] < 120 and _week_cache["value"] is not None:
+        return _week_cache["value"]
+    rules = categorize.Rules()
+    today = date.fromtimestamp(now)
+    first = today - timedelta(days=6)
+    t0 = datetime.combine(first, datetime.min.time()).timestamp()
+    items = categorize.categorise(conn, t0, now, rules)
+    days = []
+    for i in range(7):
+        d = first + timedelta(days=i)
+        d0 = datetime.combine(d, datetime.min.time()).timestamp()
+        d1 = d0 + 86400
+        prod = ph = pc = 0.0
+        for it in items:
+            o = min(it.end, d1) - max(it.start, d0)
+            if o > 0:
+                if it.category in rules.productive:
+                    prod += o
+                if it.source == "phone":
+                    ph += o
+                elif it.source in ("desktop", "browser"):
+                    pc += o
+        # pc_tracked: the PC was in use that day (so "productive per day" isn't diluted by
+        # days from before the tracker was installed).
+        days.append({"date": d.isoformat(), "productive": round(prod), "phone": round(ph), "pc_tracked": pc >= 1800})
+    apps = {}
+    for it in items:
+        if it.source == "phone":
+            apps[it.app] = apps.get(it.app, 0.0) + it.seconds
+    g = wellbeing.goals(conn, today=today, rules=rules, now=now)
+    sl = insights.sleep(conn, today, 7, rules, now=now)
+    f = focus.history(conn, t0, now, rules, now=now)
+    sub = subjects.summary(conn, first, today, rules, today=today)
+    intr = insights.interruptions(conn, t0, now, rules)
+    value = {
+        "generated": now,
+        "days": days,
+        "goals": [{"label": x["label"], "streak": x["streak"], "kind": x["kind"],
+                   "history": [h["met"] for h in x["history"][-7:]]} for x in g],
+        "sleep": {"avg_seconds": sl["avg_seconds"], "avg_bedtime": sl["avg_bedtime"], "avg_wake": sl["avg_wake"],
+                  "nights": [{"date": n["date"], "bedtime": n["bedtime"], "wake": n["wake"], "seconds": n["seconds"]}
+                             for n in sl["nights"]]},
+        "focus": {"sessions": len(f["sessions"]), "completed": f["completed"], "stopped": f["stopped"],
+                  "seconds": f["focused_seconds"], "blocked": f["blocked"]},
+        "subjects": [{k: x[k] for k in ("name", "seconds", "week_seconds", "weekly_minutes", "exam", "days_left")}
+                     for x in sub["subjects"]],
+        "top_apps": [{"app": a, "seconds": round(s)} for a, s in sorted(apps.items(), key=lambda kv: -kv[1])[:6]],
+        "pickups": {"count": intr["count"], "per_study_hour": intr["per_study_hour"]},
+    }
+    _week_cache.update(ts=now, value=value)
     return value
 
 
@@ -335,6 +403,16 @@ class PhoneHandler(BaseHTTPRequestHandler):
         if url.path == "/phone/pair/status":
             q = parse_qs(url.query)
             return self._send(200, pair_status(q.get("request", [""])[0], q.get("device", [""])[0]))
+        if url.path == "/phone/week":  # the app's Week tab
+            if not _device_for_token(self.headers.get("X-Phone-Token", ""))[0]:
+                return self._send(401, {"error": "not paired"})
+            conn = db.connect()
+            try:
+                return self._send(200, week_for_phone(conn))
+            except ValueError as exc:
+                return self._send(500, {"error": str(exc)})
+            finally:
+                conn.close()
         if url.path == "/phone/hello":  # the app's "is my token still good?" check
             dev_id, d = _device_for_token(self.headers.get("X-Phone-Token", ""))
             if not dev_id:

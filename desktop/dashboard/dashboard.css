@@ -350,6 +350,15 @@ mark { background: var(--wash); color: var(--ink); font-weight: 600; border-radi
 .goal-dots .dot.miss { background: var(--wash); }
 .goal-dots .dot.open { border-style: dashed; }
 .goal-dots .dot.none { border-color: transparent; background: var(--wash); opacity: .4; }
+.subjects { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px 28px; margin-bottom: 8px; }
+.subject .goal-meta .ok { color: var(--cat-3); }
+.goal-track.thin { height: 4px; margin-top: 6px; }
+.goal-track.thin i { background: var(--cat-3); opacity: .55; }
+.goal-track.thin i.done { opacity: 1; }
+.chip { font-size: 12px; font-weight: 600; padding: 1px 9px; border-radius: 999px; background: var(--wash); color: var(--ink-2); white-space: nowrap; }
+.chip.warn { background: color-mix(in srgb, var(--cat-4) 22%, transparent); color: var(--ink); }
+.chip.bad { background: color-mix(in srgb, var(--error) 20%, transparent); color: var(--error); }
+#subjects-edit { margin-top: 12px; }
 .wb-form { display: grid; gap: 14px; }
 .wb-form fieldset { border: 1px solid var(--ring); border-radius: 10px; padding: 10px 14px 12px; margin: 0; display: grid; gap: 8px; }
 .wb-form legend { font-weight: 600; padding: 0 4px; }

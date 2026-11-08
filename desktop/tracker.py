@@ -26,6 +26,7 @@ import mailer
 import nudge
 import phone
 import server
+import subjects
 import weekly
 import win32
 
@@ -141,6 +142,15 @@ def background_worker() -> None:
             log.warning("ai judge: %s (pausing %d min)", exc, ai_judge.BACKOFF // 60)
         except Exception:
             log.exception("ai judge failed")
+
+        try:  # study pages your subject keywords miss
+            result = subjects.run_batch(conn, categorize.Rules())
+            if result.get("pages"):
+                log.info("subjects: %s", result)
+        except ai_judge.JudgeError as exc:
+            log.warning("subjects: %s", exc)
+        except Exception:
+            log.exception("subjects failed")
 
         if AUTO_WEEKLY and time.time() - last_weekly_check >= 3600:
             last_weekly_check = time.time()

@@ -19,6 +19,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -80,7 +81,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (Prefs(this).paired) SyncWorker.schedule(this)
-        setContent { AppTheme { Screen(resumed.intValue) } }
+        val startTab = if (intent?.getStringExtra("tab") == "week") 1 else 0
+        setContent { AppTheme { Screen(resumed.intValue, startTab) } }
     }
 
     override fun onResume() {
@@ -96,10 +98,10 @@ private fun ignoringBattery(ctx: Context): Boolean =
 
 // ------------------------------------------------------------------ building blocks
 
-private val CardShape = RoundedCornerShape(20.dp)
+internal val CardShape = RoundedCornerShape(20.dp)
 
 @Composable
-private fun Panel(
+internal fun Panel(
     modifier: Modifier = Modifier,
     container: Color = MaterialTheme.colorScheme.surfaceContainer,
     border: Color? = MaterialTheme.colorScheme.outlineVariant,
@@ -113,33 +115,34 @@ private fun Panel(
 }
 
 @Composable
-private fun Kicker(text: String, color: Color = MaterialTheme.colorScheme.onSurfaceVariant, modifier: Modifier = Modifier) =
+internal fun Kicker(text: String, color: Color = MaterialTheme.colorScheme.onSurfaceVariant, modifier: Modifier = Modifier) =
     Text(text.uppercase(), style = MaterialTheme.typography.labelSmall, color = color, modifier = modifier)
 
 @Composable
-private fun Muted(text: String, modifier: Modifier = Modifier) =
+internal fun Muted(text: String, modifier: Modifier = Modifier) =
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
 
 @Composable
-private fun Bar(fraction: Float, color: Color, modifier: Modifier = Modifier) {
+internal fun Bar(fraction: Float, color: Color, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(LocalSignal.current.track)) {
         Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(6.dp).clip(CircleShape).background(color))
     }
 }
 
 @Composable
-private fun Dot(color: Color, size: Int = 8) = Box(Modifier.size(size.dp).clip(CircleShape).background(color))
+internal fun Dot(color: Color, size: Int = 8) = Box(Modifier.size(size.dp).clip(CircleShape).background(color))
 
 // ------------------------------------------------------------------ the screen
 
 @Composable
-fun Screen(resumeTick: Int) {
+fun Screen(resumeTick: Int, startTab: Int = 0) {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     var access by remember { mutableStateOf(Usage.hasAccess(ctx)) }
     var paired by remember { mutableStateOf(prefs.paired) }
     var today by remember { mutableStateOf<Triple<Long, Int, List<Pair<String, Long>>>?>(null) }
     var tick by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableIntStateOf(startTab) }
 
     LaunchedEffect(resumeTick, tick) {
         access = Usage.hasAccess(ctx)
@@ -153,6 +156,8 @@ fun Screen(resumeTick: Int) {
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Header(paired, prefs.lastSyncMs, prefs.lastError)
+            Tabs(tab) { tab = it }
+            if (tab == 1) { WeekScreen(paired); return@Column }
             today?.let { TodayCard(it, prefs) }
             FocusCard(tick) { tick++ }
             RulesCard(tick)
@@ -160,6 +165,22 @@ fun Screen(resumeTick: Int) {
             SetupSection(access, paired, resumeTick, onChange = { tick++ }, onPaired = { paired = true; tick++ })
             Muted("Sends which apps you use and when to your PC's tracker. Never what's inside them.",
                 Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
+        }
+    }
+}
+
+/** Today | Week, as a pill-shaped segmented switch. */
+@Composable
+private fun Tabs(selected: Int, onSelect: (Int) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().clip(CircleShape).background(scheme.surfaceContainerHigh).padding(4.dp)) {
+        listOf("Today", "Week").forEachIndexed { i, label ->
+            val on = i == selected
+            Box(Modifier.weight(1f).clip(CircleShape).background(if (on) scheme.primary else Color.Transparent)
+                .clickable { onSelect(i) }.padding(vertical = 9.dp), contentAlignment = Alignment.Center) {
+                Text(label, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (on) scheme.onPrimary else scheme.onSurfaceVariant)
+            }
         }
     }
 }
@@ -195,8 +216,23 @@ private fun TodayCard(data: Triple<Long, Int, List<Pair<String, Long>>>, prefs: 
     val pc = runCatching { JSONObject(prefs.today) }.getOrDefault(JSONObject())
     val fresh = System.currentTimeMillis() - prefs.todayAtMs < 3 * 3600_000
     val productive = pc.optLong("productive", -1).takeIf { it >= 0 && fresh }
+    val exam = pc.optJSONObject("next_exam")?.takeIf { fresh }
     Panel {
-        Kicker("Today")
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Kicker("Today", modifier = Modifier.weight(1f))
+            exam?.let { e ->
+                val dl = e.optInt("days_left")
+                val sig = LocalSignal.current
+                val (bg, fg) = when {
+                    dl <= 2 -> scheme.errorContainer to scheme.error
+                    dl <= 7 -> sig.warningContainer to sig.onWarningContainer
+                    else -> scheme.surfaceContainerHigh to scheme.onSurfaceVariant
+                }
+                Text("${e.optString("name")} exam " + if (dl == 0) "today" else "in $dl day${if (dl == 1) "" else "s"}",
+                    style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, color = fg,
+                    modifier = Modifier.clip(CircleShape).background(bg).padding(horizontal = 10.dp, vertical = 3.dp))
+            }
+        }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth()) {
             Column(Modifier.weight(1f)) {

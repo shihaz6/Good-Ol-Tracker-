@@ -258,6 +258,27 @@ work away from the PC.
   Phone card shows its state. (A browser with its own custom "secure DNS" provider set would
   bypass it.)
 
+## Subjects and exams
+
+Dashboard card **Subjects** → *Your subjects and exams*: a name per module, keywords
+(`sql, normalization, er diagram, IT2040`; VS Code project names work too), an optional
+exam date and weekly target (`data\subjects.json`, `desktop/subjects.py`).
+
+- Productive time (Study/Coding/Work, PC, phone or logged offline) is tagged with the
+  subject whose keywords match best in the window/tab title, page title, channel,
+  description or headings. Ties count for nobody. Editing keywords re-tags all history.
+- Study pages (1 min+, last 14 days) the keywords miss are sent to Groq (title, channel,
+  description, first 400 characters) to pick one of your modules or none; cached.
+- Shows time per subject, this week vs your weekly target, and "Exam in N days" (amber
+  within a week, coral within 2 days). Also in the emails and the phone app.
+
+## Phone app: Week tab
+
+**Today / Week** at the top of the app. Week (fetched from the PC, `/phone/week`, kept for
+when it's out of reach): productive vs phone time per day, goal streaks, subjects with exam
+countdowns, sleep, focus sessions, pickups while studying and top phone apps. Averages only
+count days each device was tracked.
+
 ## Email reports (Gmail)
 
 Set up on the dashboard's **Email reports** card: your Gmail address, where to send,

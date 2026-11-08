@@ -1145,6 +1145,7 @@ async function load() {
     render(data);
     loadInsights(start, end);
     loadWellbeing();
+    loadSubjects(start, end);
     loadAI();
     loadHealth();
     updateExports(start, end);
@@ -1625,6 +1626,112 @@ $("#wb-form").addEventListener("submit", async (ev) => {
     say("#wb-msg", "Saved. The phone picks it up on its next sync (within a minute while it's in use).");
     loadWellbeing();
   } catch (err) { say("#wb-msg", `Couldn't save: ${err.message}`, true); }
+});
+
+// ------------------------------------------------------------------ subjects + exams
+
+const subj = { dirty: false };
+
+async function loadSubjects(start, end) {
+  let d;
+  try {
+    const res = await fetch(`/api/subjects?start=${start}&end=${end}`, { cache: "no-store" });
+    d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+  } catch { return; }
+  renderSubjects(d);
+  if (!subj.dirty && !$("#subjects-form").contains(document.activeElement)) {
+    $("#subjects-rows").replaceChildren(...d.subjects.map((s) => subjectRow(s)));
+    if (!d.subjects.length) $("#subjects-rows").append(subjectRow());
+  }
+}
+
+function examChip(days) {
+  if (days == null || days < 0) return null;
+  const chip = el("span", days <= 2 ? "chip bad" : days <= 7 ? "chip warn" : "chip",
+    days === 0 ? "Exam today" : `Exam in ${days} day${days === 1 ? "" : "s"}`);
+  return chip;
+}
+
+function renderSubjects(d) {
+  const list = d.subjects;
+  $("#subjects-sub").textContent = d.next_exam
+    ? `Next exam: ${d.next_exam.name}, ${d.next_exam.days_left === 0 ? "today" : `in ${d.next_exam.days_left} days`}` : "";
+  if (!list.length) {
+    $("#subjects").replaceChildren(empty("Add your modules below (e.g. DBMS, OOP) to see study time per subject and count down to exams."));
+    $("#subjects-edit").open = true;
+    return;
+  }
+  const max = Math.max(1, ...list.map((s) => s.seconds));
+  const grid = el("div", "subjects");
+  list.slice().sort((a, b) => (a.days_left ?? 9999) - (b.days_left ?? 9999) || b.seconds - a.seconds).forEach((s) => {
+    const row = el("div", "subject");
+    const head = el("div", "goal-head");
+    const name = el("b", null, s.name);
+    head.append(name);
+    const chip = examChip(s.days_left);
+    if (chip) head.append(chip);
+    const track = el("div", "goal-track");
+    const fill = el("i");
+    fill.style.width = `${(s.seconds / max) * 100}%`;
+    track.append(fill);
+    const meta = el("div", "goal-meta");
+    meta.append(el("span", null, `${fmtDur(s.seconds)} in this range`));
+    if (s.weekly_minutes) {
+      const pctw = Math.min(100, Math.round((s.week_seconds / (s.weekly_minutes * 60)) * 100));
+      meta.append(el("span", pctw >= 100 ? "ok" : null, `this week ${fmtDur(s.week_seconds)} of ${fmtDur(s.weekly_minutes * 60)}`));
+    } else meta.append(el("span", null, `this week ${fmtDur(s.week_seconds)}`));
+    row.append(head, track, meta);
+    if (s.weekly_minutes) {
+      const wk = el("div", "goal-track thin");
+      const wf = el("i", s.week_seconds >= s.weekly_minutes * 60 ? "done" : null);
+      wf.style.width = `${Math.min(100, (s.week_seconds / (s.weekly_minutes * 60)) * 100)}%`;
+      wk.append(wf);
+      wk.title = "This week vs your weekly target";
+      row.append(wk);
+    }
+    if (s.top.length) setTip(row, { title: s.name, rows: s.top.map((t) => ({ label: t.title.slice(0, 60), value: fmtDur(t.seconds) })) });
+    grid.append(row);
+  });
+  const parts = [grid];
+  if (d.untagged_seconds > 600) {
+    parts.push(el("p", "muted", `${fmtDur(d.untagged_seconds)} of study/work time didn't match a subject. Add keywords to catch more.`));
+  }
+  $("#subjects").replaceChildren(...parts);
+}
+
+function subjectRow(s = { name: "", keywords: [], exam: null, weekly_minutes: null }) {
+  const name = el("input"); Object.assign(name, { name: "name", value: s.name, placeholder: "e.g. DBMS", maxLength: 40 });
+  name.setAttribute("aria-label", "Subject name");
+  const kw = el("input", "grow"); Object.assign(kw, { name: "keywords", value: s.keywords.join(", "),
+    placeholder: "keywords, comma separated: sql, normalization, er diagram, IT2040" });
+  kw.setAttribute("aria-label", "Keywords");
+  const exam = el("input"); Object.assign(exam, { type: "date", name: "exam", value: s.exam || "" });
+  exam.setAttribute("aria-label", "Exam date");
+  const wk = el("input", "num"); Object.assign(wk, { type: "number", name: "weekly", min: 0, max: 100, step: 0.5,
+    value: s.weekly_minutes ? s.weekly_minutes / 60 : "", placeholder: "h" });
+  wk.setAttribute("aria-label", "Weekly target in hours");
+  const lab = (t, node) => { const l = el("label", "inline"); l.append(document.createTextNode(t + " "), node); return l; };
+  return wbRow(name, kw, lab("Exam", exam), lab("Target", wk), document.createTextNode("h/week"));
+}
+
+$("#subjects-form").addEventListener("input", () => { subj.dirty = true; });
+$("#subjects-add").addEventListener("click", () => { $("#subjects-rows").append(subjectRow()); subj.dirty = true; });
+$("#subjects-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const list = [...$("#subjects-rows").querySelectorAll(".wb-row")].map((r) => ({
+    name: r.querySelector("[name=name]").value.trim(),
+    keywords: r.querySelector("[name=keywords]").value,
+    exam: r.querySelector("[name=exam]").value || null,
+    weekly_minutes: r.querySelector("[name=weekly]").value ? Math.round(Number(r.querySelector("[name=weekly]").value) * 60) : null,
+  })).filter((s) => s.name);
+  try {
+    await post("/api/subjects", { subjects: list });
+    subj.dirty = false;
+    say("#subjects-msg", `Saved ${list.length} subject${list.length === 1 ? "" : "s"}. Past study time is re-tagged right away.`);
+    const [start, end] = rangeDates();
+    loadSubjects(start, end);
+  } catch (err) { say("#subjects-msg", `Couldn't save: ${err.message}`, true); }
 });
 
 // ------------------------------------------------------------------ sleep + phone while studying

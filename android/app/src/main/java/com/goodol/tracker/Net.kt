@@ -160,6 +160,15 @@ object Net {
         return res
     }
 
+    /** The Week tab's data (last 7 days, goals, sleep, subjects...). Cached in prefs. */
+    fun week(context: Context, prefs: Prefs): JSONObject {
+        val pc = findPc(context, prefs) ?: throw NetError("PC not found on this network")
+        val (code, res) = request(pc, "/phone/week", token = prefs.token, timeoutMs = 15000)
+        if (code != 200) throw NetError(res.optString("error", "PC answered $code"))
+        prefs.week = res.toString()
+        return res
+    }
+
     /** Sends everything since the cursor. Returns how many sessions went over. */
     @Synchronized
     fun sync(context: Context, prefs: Prefs): Int {

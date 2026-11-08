@@ -26,17 +26,20 @@ data class Signal(
     val success: Color, val successContainer: Color, val onSuccessContainer: Color,
     val warning: Color, val warningContainer: Color, val onWarningContainer: Color,
     val track: Color,
+    val phone: Color,          // phone time in charts (next to blue productive time)
 )
 
 private val DarkSignal = Signal(
     success = Color(0xFF4FD1A5), successContainer = Color(0xFF123A30), onSuccessContainer = Color(0xFFBFF3DF),
     warning = Color(0xFFF5C451), warningContainer = Color(0xFF3A2E12), onWarningContainer = Color(0xFFFCE7B0),
     track = Color(0xFF2A303B),
+    phone = Color(0xFFA99CFF),
 )
 private val LightSignal = Signal(
     success = Color(0xFF0F9D74), successContainer = Color(0xFFD5F5E9), onSuccessContainer = Color(0xFF053D2D),
     warning = Color(0xFFB7791F), warningContainer = Color(0xFFFDF0D2), onWarningContainer = Color(0xFF4A3005),
     track = Color(0xFFE3E7EE),
+    phone = Color(0xFF6250D6),
 )
 
 private val Dark = darkColorScheme(

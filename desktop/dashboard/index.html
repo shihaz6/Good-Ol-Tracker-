@@ -111,6 +111,25 @@
         <div id="goals"></div>
       </section>
 
+      <section class="card wide" id="subjects-card">
+        <div class="card-head">
+          <h2>Subjects</h2>
+          <span class="muted" id="subjects-sub"></span>
+        </div>
+        <div id="subjects"></div>
+        <details id="subjects-edit">
+          <summary>Your subjects and exams</summary>
+          <p class="sub">Study, coding and work time is tagged with the subject whose keywords appear in the page,
+            video or window title (VS Code project names work too). Groq tags study pages the keywords miss.</p>
+          <form id="subjects-form" class="wb-form">
+            <div id="subjects-rows"></div>
+            <button type="button" class="linkbtn" id="subjects-add">+ Add a subject</button>
+            <div class="buttons"><button type="submit" class="primary">Save subjects</button></div>
+          </form>
+          <p class="formmsg" id="subjects-msg" role="status"></p>
+        </details>
+      </section>
+
       <section class="card wide" id="find-card">
         <h2>Search what you've read</h2>
         <p class="sub">Pages, videos and your past searches. Finds by words and, with Voyage, by meaning.</p>

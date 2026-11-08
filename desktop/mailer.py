@@ -25,6 +25,7 @@ import db
 import focus
 import insights
 import keys
+import subjects
 import weekly
 import wellbeing
 
@@ -178,6 +179,7 @@ def build_daily(conn, day: date, rules=None):
         stats.insert(2, ("Offline (logged)", _dur(s["offline_seconds"])))
     stats += _phone_rows(conn, day, day, rules)
     stats += _goal_rows(conn, day, day, rules)
+    stats += _subject_rows(conn, day, day, rules)
     cats = sorted(t["by_category"].items(), key=lambda kv: -kv[1])
     apps = [(a["name"], _dur(a["seconds"])) for a in s["top_apps"][:5]]
     topics = ", ".join(x["term"] for x in s["topics"][:10]) or "-"
@@ -192,6 +194,22 @@ def build_daily(conn, day: date, rules=None):
         f"<p><b>Topics:</b> {html.escape(topics)}</p>",
     ])
     return subject, text, body
+
+
+def _subject_rows(conn, start: date, end: date, rules) -> list:
+    """Study time per subject in the period, with exam countdowns."""
+    s = subjects.summary(conn, start, end, rules, today=end)
+    rows = []
+    for x in sorted(s["subjects"], key=lambda x: (x["days_left"] is None or x["days_left"] < 0, x["days_left"] or 0, -x["seconds"])):
+        if not x["seconds"] and x["days_left"] is None:
+            continue
+        line = _dur(x["seconds"])
+        if x["weekly_minutes"]:
+            line += f" · this week {_dur(x['week_seconds'])} of {_dur(x['weekly_minutes'] * 60)}"
+        if x["days_left"] is not None and x["days_left"] >= 0:
+            line += " · exam today!" if x["days_left"] == 0 else f" · exam in {x['days_left']} day{'s' if x['days_left'] != 1 else ''}"
+        rows.append((f"Subject: {x['name']}", line))
+    return rows
 
 
 def _goal_rows(conn, start: date, end: date, rules) -> list:
@@ -271,6 +289,7 @@ def build_period(conn, start: date, end: date, ai_text: str | None, ai_note: str
         compare.append(("Focus sessions", line))
     compare += _phone_rows(conn, start, end, rules, d)
     compare += _goal_rows(conn, start, end, rules)
+    compare += _subject_rows(conn, start, end, rules)
     cats = sorted(now_p["by_category"].items(), key=lambda kv: -kv[1])
     if ai_text:
         ai_block = ai_text

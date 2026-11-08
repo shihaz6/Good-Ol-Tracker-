@@ -29,6 +29,7 @@ Endpoints:
   GET /api/phone · POST /api/phone/decide {id, allow} · POST /api/phone/unpair {id}
   GET /api/wellbeing · POST /api/wellbeing {limits, bedtime, schedules, goals}
   GET /api/insights?start=&end=        sleep + phone pickups during study
+  GET /api/subjects?start=&end= · POST /api/subjects {subjects:[{name, keywords, exam, weekly_minutes}]}
        (the phone itself talks to phone.py on its own port, see there)
   GET  /api/find?q=&meaning=1          -> search pages you've read + past searches
   GET  /api/focus / POST /api/focus/start {minutes,label} / /api/focus/stop / /api/focus/settings
@@ -63,6 +64,7 @@ import mailer
 import nudge
 import phone
 import rules_edit
+import subjects
 import weekly
 import wellbeing
 
@@ -219,6 +221,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/phone": lambda: self._json(200, phone.status()),
             "/api/insights": lambda: self._insights(parse_qs(query)),
             "/api/wellbeing": self._wellbeing,
+            "/api/subjects": lambda: self._subjects(parse_qs(query)),
         }
         if path in routes:
             if not self._dashboard_ok(api=True):
@@ -291,6 +294,19 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
         return self._json(200, data)
+
+    def _subjects(self, params):
+        try:
+            start, end = self._range(params, default_days=7)
+        except ValueError:
+            return self._send(400, {"error": "start/end must be YYYY-MM-DD"})
+        conn = db.connect()
+        try:
+            return self._json(200, subjects.summary(conn, start, end))
+        except ValueError as exc:
+            return self._send(500, {"error": f"categories.json: {exc}"})
+        finally:
+            conn.close()
 
     def _insights(self, params):
         try:
@@ -541,6 +557,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/ai/dismiss": self._ai_dismiss,
             "/api/nudge/settings": lambda b: self._json(200, {"ok": True, "settings": nudge.save_settings(b)}),
             "/api/wellbeing": lambda b: self._json(200, {"ok": True, "settings": wellbeing.save(b)}),
+            "/api/subjects": lambda b: self._json(200, {"ok": True, "subjects": subjects.save(b.get("subjects"))}),
             "/api/phone/decide":lambda b: self._json(200, phone.decide(str(b.get("id", "")), bool(b.get("allow")))),
             "/api/phone/unpair": lambda b: (phone.unpair(str(b.get("id", ""))), self._json(200, {"ok": True}))[1],
             "/api/nudge/snooze": lambda b:self._json(200, {"ok": True, "snoozed_until": nudge.snooze(b.get("minutes"))}),

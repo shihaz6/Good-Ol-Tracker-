@@ -162,6 +162,14 @@ CREATE TABLE IF NOT EXISTS name_judge (
     PRIMARY KEY (kind, name)
 );
 
+-- Subjects (subjects.py): Groq's pick for study pages your keywords didn't match.
+CREATE TABLE IF NOT EXISTS subject_judge (
+    url            TEXT PRIMARY KEY,
+    subject        TEXT,              -- NULL = none of your subjects
+    subjects_hash  TEXT NOT NULL,     -- subject names + keywords it chose from
+    updated_ts     REAL NOT NULL
+);
+
 -- Phone (Android companion app). App time goes into sessions (source 'phone',
 -- app = package name, title = app name, client_id = 'phone:<device>:<package>@<start ms>').
 CREATE TABLE IF NOT EXISTS phone_unlocks (

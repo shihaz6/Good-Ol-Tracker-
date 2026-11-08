@@ -116,6 +116,11 @@ class Prefs(context: Context) {
         get() = p.getString("pc_used", "{}") ?: "{}"
         set(v) = p.edit().putString("pc_used", v).apply()
 
+    /** The Week tab's data from the PC (JSON), kept for when the PC isn't reachable. */
+    var week: String
+        get() = p.getString("week", "") ?: ""
+        set(v) = p.edit().putString("week", v).apply()
+
     var dnsWasOn: Boolean
         get() = p.getBoolean("dns_was_on", false)
         set(v) = p.edit().putBoolean("dns_was_on", v).apply()
