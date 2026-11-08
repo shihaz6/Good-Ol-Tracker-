@@ -121,5 +121,66 @@ class GoalsTest(Base):
         self.assertEqual((prod["met_today"], prod["streak"]), (True, 3))
 
 
+class PcRulesTest(Base):
+    def setUp(self):
+        super().setUp()
+        wellbeing._pc_cache["ts"] = 0.0
+
+    def add(self, s, e, source, app, title="x", url=None):
+        self.conn.execute("INSERT INTO sessions (start_ts, end_ts, source, app, title, url, client_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                          (s, e, source, app, title, url, f"{source}{s}{app}"))
+
+    def browse(self, s, e, domain, title, url):
+        self.add(s, e, "desktop", "brave.exe", "b")
+        self.add(s, e, "browser", domain, title, url)
+
+    def test_shared_budget_phone_plus_pc(self):
+        # Facebook limit 60 min: 40 min on the phone + 25 min on facebook.com = over.
+        self.add(at(9), at(9, 40), "phone", "com.facebook.katana", "Facebook")
+        self.browse(at(10), at(10, 25), "facebook.com", "Facebook", "https://www.facebook.com/")
+        self.conn.commit()
+        u = {x["pkg"]: x for x in wellbeing.limit_usage(self.conn, now=at(11), rules=self.rules)}
+        self.assertEqual((u["com.facebook.katana"]["phone"], u["com.facebook.katana"]["pc"]), (2400, 1500))
+        st = wellbeing.pc_state(self.conn, now=at(11), rules=self.rules)
+        self.assertEqual(st["limits"][0]["domains"], ["facebook.com"])
+        self.assertEqual(st["limits"][0]["until"], at(0, day=1))
+        self.assertEqual(wellbeing.pc_used_for_phone(self.conn, now=at(11))["used"], {"com.facebook.katana": 1500})
+
+    def test_study_time_on_a_limited_site_doesnt_count(self):
+        wellbeing.save({"limits": {"com.google.android.youtube": 30}}, self.rules)
+        self.browse(at(9), at(10), "youtube.com", "SQL normalization full course", "https://www.youtube.com/watch?v=a")
+        self.browse(at(10), at(10, 20), "youtube.com", "GTA funny moments", "https://www.youtube.com/watch?v=b")
+        self.conn.commit()
+        u = wellbeing.limit_usage(self.conn, now=at(11), rules=self.rules)[0]
+        self.assertEqual(u["pc"], 20 * 60)  # only the GTA video
+        st = wellbeing.pc_state(self.conn, now=at(11), rules=self.rules)
+        self.assertEqual(st["limits"], [])
+        self.assertEqual(st["warn"], [])     # 20 of 30 min: under 80%
+        self.browse(at(10, 20), at(10, 26), "youtube.com", "GTA funny moments 2", "https://www.youtube.com/watch?v=c")
+        self.conn.commit()
+        wellbeing._pc_cache["ts"] = 0.0
+        self.assertEqual(len(wellbeing.pc_state(self.conn, now=at(11), rules=self.rules)["warn"]), 1)
+
+    def test_bedtime_and_wind_down_and_grace(self):
+        st = wellbeing.pc_state(self.conn, now=at(23, 10), rules=self.rules)
+        self.assertIsNone(st["bedtime"])
+        self.assertEqual(st["wind_down"]["start"], "23:30")
+        wellbeing._pc_cache["ts"] = 0.0
+        st = wellbeing.pc_state(self.conn, now=at(23, 45), rules=self.rules)
+        bed = st["bedtime"]
+        self.assertEqual(bed["until"], at(6, day=1))
+        self.assertIn("instagram.com", bed["domains"])
+        self.assertNotIn("youtube.com", bed["domains"])  # YouTube isn't on the focus list by default
+        wellbeing.grant_grace(bed["key"], now=at(23, 46))
+        self.assertIsNone(wellbeing.pc_state(self.conn, now=at(23, 47), rules=self.rules)["bedtime"])
+        wellbeing._pc_cache["ts"] = 0.0
+        after = wellbeing.pc_state(self.conn, now=at(23, 52), rules=self.rules)["bedtime"]
+        self.assertTrue(after["grace_used"])               # back on, and no second grace
+        with self.assertRaises(ValueError):
+            wellbeing.grant_grace(bed["key"], now=at(23, 53))
+        with self.assertRaises(ValueError):
+            wellbeing.grant_grace("nonsense")
+
+
 if __name__ == "__main__":
     unittest.main()

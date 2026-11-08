@@ -41,6 +41,7 @@ object Focus {
         }
         res.optJSONObject("nudge")?.let { showNudge(context, it) }
         res.optJSONObject("wellbeing")?.let { prefs.wellbeing = it.toString() }
+        res.optJSONObject("limit_pc_used")?.let { prefs.pcUsed = it.toString() }
         res.optJSONObject("today")?.let { prefs.today = it.toString(); prefs.todayAtMs = System.currentTimeMillis() }
         TodayWidget.refresh(context)
     }

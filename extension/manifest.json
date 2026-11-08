@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Good ol Tracker",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "description": "Sends active-tab time, scroll depth, your searches and page content summaries to the local Good ol Tracker app, and blocks distracting sites during focus sessions. Nothing leaves this PC.",
   "permissions": ["tabs", "idle", "alarms", "storage", "scripting", "declarativeNetRequest", "notifications"],
   "host_permissions": [

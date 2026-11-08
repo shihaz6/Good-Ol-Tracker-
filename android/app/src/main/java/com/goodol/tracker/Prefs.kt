@@ -111,6 +111,11 @@ class Prefs(context: Context) {
     fun graceUntil(key: String): Long = p.getLong("grace:$key", 0L)
     fun setGrace(key: String, until: Long) = p.edit().putLong("grace:$key", until).apply()
 
+    /** {"date": "...", "used": {package: seconds}}: time on the app's website on the PC today. */
+    var pcUsed: String
+        get() = p.getString("pc_used", "{}") ?: "{}"
+        set(v) = p.edit().putString("pc_used", v).apply()
+
     var dnsWasOn: Boolean
         get() = p.getBoolean("dns_was_on", false)
         set(v) = p.edit().putBoolean("dns_was_on", v).apply()

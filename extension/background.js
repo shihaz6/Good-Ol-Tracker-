@@ -212,6 +212,7 @@ async function flush(mediaPlaying) {
     if (data && "adult" in data) await applyAdult(data.adult);
     if (data && "focus" in data) await applyFocus(data.focus);
     if (data?.nudge) showNudge(data.nudge);
+    if (data && "pc_rules" in data) await applyPcRules(data.pc_rules);
   }
 }
 
@@ -273,14 +274,84 @@ function domainOf(hostname) {
 // Adult filter mode from the dashboard: "focus" (during focus sessions), "always" or "off".
 const adultActive = (mode, focus) => mode === "always" || (mode !== "off" && !!focus);
 
-// Why a URL is blocked right now: "adult", "focus" or null.
-function blockReason(url, focus, adultMode) {
+// ---- bedtime + daily limits on the PC (same settings as the phone; from every /ingest reply)
+const BED_RULE_BASE = 3000;
+const LIMIT_RULE_BASE = 4000;
+const onDomain = (host, list) => (list || []).some((d) => host === d || host.endsWith("." + d));
+
+// Only the parts still in force: each block carries `until`, so if the desktop app stops
+// running, a stale bedtime or limit runs out on its own instead of blocking forever.
+async function getPcRules() {
+  const r = await getLocal("pcRules", null);
+  if (!r) return { bedtime: null, limits: [] };
+  const t = now();
+  return {
+    bedtime: r.bedtime && r.bedtime.until > t ? r.bedtime : null,
+    limits: (r.limits || []).filter((l) => l.until > t),
+  };
+}
+
+// Why a URL is blocked right now: "adult", "focus", "bedtime", "limit" or null.
+function blockReason(url, focus, adultMode, pc) {
   const u = parseUrl(url);
   if (!u || !/^https?:$/.test(u.protocol)) return null;
   const host = domainOf(u.hostname);
   if (adultActive(adultMode, focus) && isAdultHost(host)) return "adult";
   if (focus && focus.block.some((d) => host === d || host.endsWith("." + d))) return "focus";
+  if (pc?.bedtime && onDomain(host, pc.bedtime.domains)) return "bedtime";
+  if (pc?.limits?.some((l) => onDomain(host, l.domains))) return "limit";
   return null;
+}
+
+async function applyPcRules(rules) {
+  if (!rules || typeof rules !== "object") return;
+  const prev = JSON.stringify(await getLocal("pcRules", null));
+  await chrome.storage.local.set({ pcRules: rules });
+  if (prev !== JSON.stringify(rules)) {
+    await updateBlockRules();
+    await closeBlockedTabs();
+  }
+  // Re-check when the earliest block runs out (bedtime end, midnight) even if we're offline.
+  const ends = [rules.bedtime?.until, ...(rules.limits || []).map((l) => l.until)].filter((x) => x > now());
+  if (ends.length) await chrome.alarms.create("pc-rules", { when: Math.min(...ends) * 1000 + 1000 });
+  // Heads-ups, each once.
+  const shown = await getLocal("shownNotes", {});
+  const note = async (key, title, message) => {
+    if (shown[key]) return;
+    shown[key] = now();
+    chrome.notifications.create(`note-${key}`, { type: "basic", iconUrl: "icon128.png", title, message });
+  };
+  for (const w of rules.warn || []) {
+    const left = Math.max(1, Math.round((w.minutes * 60 - w.used) / 60));
+    await note(`warn:${w.key}`, `${w.label}: ${left} min left today`,
+      `Your ${w.minutes}-minute daily limit counts the phone app and ${w.domains[0]} together. After that it's blocked until midnight.`);
+  }
+  if (rules.wind_down) {
+    const mins = Math.max(1, Math.round((rules.wind_down.at - now()) / 60));
+    await note(rules.wind_down.key, `Bedtime in ${mins} min`,
+      `Social and video sites lock at ${rules.wind_down.start}, here and on your phone. Good time to wrap up.`);
+  }
+  for (const k of Object.keys(shown)) if (shown[k] < now() - 3 * 86400) delete shown[k];
+  await chrome.storage.local.set({ shownNotes: shown });
+}
+
+async function graceRequest(key) {
+  const token = await getLocal("token", "");
+  const res = await fetch(`${SERVER}/grace`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Tracker-Token": token },
+    body: JSON.stringify({ key }),
+    signal: AbortSignal.timeout(5000),
+  }).catch(() => null);
+  if (!res) throw new Error("The desktop tracker isn't running");
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  // Lift the block right away, without waiting for the next check-in.
+  const cur = (await getLocal("pcRules", null)) || {};
+  if (cur.bedtime?.key === key) cur.bedtime = null;
+  cur.limits = (cur.limits || []).filter((l) => l.key !== key);
+  await chrome.storage.local.set({ pcRules: data.pc_rules || cur });
+  await updateBlockRules();
 }
 
 const blockedPage = (url, reason) =>
@@ -315,6 +386,15 @@ async function updateBlockRules() {
       condition: { regexFilter: "^https?://[^/?#]*\\.(xxx|porn|sex|adult)\\.?([:/?#].*)?$", resourceTypes: ["main_frame"] },
     });
   }
+  const pc = await getPcRules();
+  (pc.bedtime?.domains || []).slice(0, 500).forEach((d, i) => addRules.push({
+    id: BED_RULE_BASE + i, priority: 1, action: redirectTo("bedtime"),
+    condition: { regexFilter: "^https?://.*", requestDomains: [d], resourceTypes: ["main_frame"] },
+  }));
+  pc.limits.flatMap((l) => l.domains).slice(0, 500).forEach((d, i) => addRules.push({
+    id: LIMIT_RULE_BASE + i, priority: 1, action: redirectTo("limit"),
+    condition: { regexFilter: "^https?://.*", requestDomains: [d], resourceTypes: ["main_frame"] },
+  }));
   const existing = (await chrome.declarativeNetRequest.getDynamicRules()).map((r) => r.id);
   try {
     await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: existing, addRules });
@@ -335,8 +415,9 @@ async function applyAdult(mode) {
 async function closeBlockedTabs() {
   const focus = await getFocus();
   const adultMode = await getLocal("adultMode", "focus");
+  const pc = await getPcRules();
   for (const t of await chrome.tabs.query({ active: true })) {
-    const reason = blockReason(t.url, focus, adultMode);
+    const reason = blockReason(t.url, focus, adultMode, pc);
     if (reason) chrome.tabs.update(t.id, { url: blockedPage(t.url, reason) });
   }
 }
@@ -367,7 +448,7 @@ async function applyFocus(next) {
 // Fallback for when the network rules can't redirect (no site access): check on navigation.
 async function enforceFocus(tab) {
   if (!tab?.url) return;
-  const reason = blockReason(tab.url, await getFocus(), await getLocal("adultMode", "focus"));
+  const reason = blockReason(tab.url, await getFocus(), await getLocal("adultMode", "focus"), await getPcRules());
   if (reason) await chrome.tabs.update(tab.id, { url: blockedPage(tab.url, reason) }).catch(() => {});
 }
 
@@ -401,6 +482,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       serial(() => enqueue("blocks", { id: crypto.randomUUID(), ts: now(), domain: domainOf(u.hostname) }));
     }
     return;
+  }
+  if (msg?.type === "pc-grace") {  // blocked page: "5 more minutes"
+    serial(() => graceRequest(String(msg.key || "")))
+      .then(() => sendResponse({ ok: true }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
   }
   if (!["focus-start", "focus-stop", "focus-status"].includes(msg?.type)) return;
   const body = { action: msg.type.slice(6), minutes: msg.minutes, label: msg.label };
@@ -591,6 +678,7 @@ chrome.storage.onChanged.addListener((changes) => {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "heartbeat") serial(tick);
   if (alarm.name === "focus-end") serial(async () => { await applyFocus(null); await tick(); });
+  if (alarm.name === "pc-rules") serial(updateBlockRules);  // a bedtime/limit block ran out
 });
 
 async function init() {

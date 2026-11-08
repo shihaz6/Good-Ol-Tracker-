@@ -130,6 +130,7 @@ def save(body: dict, rules=None) -> dict:
     with _lock:
         db.DATA_DIR.mkdir(parents=True, exist_ok=True)
         _path().write_text(json.dumps(cur, indent=2), encoding="utf-8")
+    _pc_cache["ts"] = 0.0  # the extension sees the change on its next check-in
     return cur
 
 
@@ -271,8 +272,129 @@ def goals(conn, today: date | None = None, days: int = 30, rules=None, now=None)
     return out
 
 
+# ------------------------------------------------------------------ the same rules on the PC
+
+# A phone app's limit also covers its website on the PC: one shared daily budget.
+APP_SITES = {
+    "com.facebook.katana": ["facebook.com"], "com.facebook.lite": ["facebook.com"],
+    "com.instagram.android": ["instagram.com"], "com.google.android.youtube": ["youtube.com"],
+    "com.zhiliaoapp.musically": ["tiktok.com"], "com.ss.android.ugc.trill": ["tiktok.com"],
+    "com.twitter.android": ["x.com", "twitter.com"], "com.reddit.frontpage": ["reddit.com"],
+    "com.snapchat.android": ["snapchat.com"], "com.netflix.mediaclient": ["netflix.com"],
+    "com.facebook.orca": ["messenger.com"], "com.linkedin.android": ["linkedin.com"],
+    "com.pinterest": ["pinterest.com"], "tv.twitch.android.app": ["twitch.tv"],
+    "com.instagram.barcelona": ["threads.net"], "com.spotify.music": ["open.spotify.com"],
+}
+GRACE_SECONDS = 5 * 60
+_pc_cache = {"ts": 0.0, "value": None}
+
+
+def _grace_path():
+    return db.DATA_DIR / "wellbeing_grace.json"
+
+
+def _graces() -> dict:
+    try:
+        return json.loads(_grace_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def grant_grace(key: str, now=None) -> float:
+    """'5 more minutes' on the PC, once per bedtime night / limit per day."""
+    now = now or time.time()
+    if not isinstance(key, str) or not re.match(r"^(bed|limit:[a-z0-9_.]+)\|\d{4}-\d{2}-\d{2}$", key):
+        raise WellbeingError("bad grace key")
+    with _lock:
+        g = {k: v for k, v in _graces().items() if v > now - 3 * 86400}  # forget old ones
+        if key in g:
+            raise WellbeingError("you've already had your 5 more minutes for this")
+        g[key] = now + GRACE_SECONDS
+        db.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        _grace_path().write_text(json.dumps(g), encoding="utf-8")
+    _pc_cache["ts"] = 0.0
+    return g[key]
+
+
+def _on(domain: str, domains) -> bool:
+    d = (domain or "").lower().removeprefix("www.")
+    return any(d == x or d.endswith("." + x) for x in domains)
+
+
+def limit_usage(conn, now=None, rules=None) -> list:
+    """Each daily limit with today's use on the phone (the app) and the PC (its website).
+    Study time doesn't count: on the PC only non-productive time on the site is added, so a
+    YouTube lecture doesn't eat your YouTube budget."""
+    rules = rules or categorize.Rules()
+    now = now or time.time()
+    lim = settings()["limits"]
+    if not lim:
+        return []
+    d0 = datetime.combine(date.fromtimestamp(now), datetime.min.time()).timestamp()
+    items = categorize.categorise(conn, d0, now, rules)
+    out = []
+    for pkg, minutes in lim.items():
+        domains = APP_SITES.get(pkg, [])
+        phone_s = sum(it.seconds for it in items if it.source == "phone" and it.title.lower() == pkg)
+        pc_s = sum(it.seconds for it in items if it.source == "browser" and _on(it.app, domains)
+                   and it.category not in rules.productive)
+        label = next((it.app for it in items if it.source == "phone" and it.title.lower() == pkg), None)
+        out.append({"pkg": pkg, "label": label or (domains[0] if domains else pkg), "minutes": minutes,
+                    "domains": domains, "phone": round(phone_s), "pc": round(pc_s), "used": round(phone_s + pc_s),
+                    "key": f"limit:{pkg}|{date.fromtimestamp(now).isoformat()}"})
+    return out
+
+
+def pc_state(conn, now=None, rules=None) -> dict:
+    """What the browser extension enforces right now (sent with every /ingest reply).
+    Each block carries `until`, so a stale copy runs out on its own if the tracker stops."""
+    now = now or time.time()
+    if now - _pc_cache["ts"] < 20 and _pc_cache["value"] is not None:
+        return _pc_cache["value"]
+    s = settings()
+    graces = _graces()
+    graced = lambda key: graces.get(key, 0) > now  # noqa: E731
+    midnight = datetime.combine(date.fromtimestamp(now) + timedelta(days=1), datetime.min.time()).timestamp()
+    limits, warn = [], []
+    for u in limit_usage(conn, now, rules):
+        if not u["domains"]:
+            continue
+        info = {"label": u["label"], "domains": u["domains"], "used": u["used"], "minutes": u["minutes"],
+                "key": u["key"], "until": midnight, "grace_used": u["key"] in graces}
+        if u["used"] >= u["minutes"] * 60:
+            if not graced(u["key"]):
+                limits.append(info)
+        elif u["used"] >= u["minutes"] * 60 * 0.8:
+            warn.append(info)
+    bed = s["bedtime"]
+    bedtime = wind = None
+    if bed["enabled"]:
+        dt = datetime.fromtimestamp(now)
+        win = window_now(bed["start"], bed["end"], dt)
+        if win:
+            key = f"bed|{win[0].date().isoformat()}"
+            if not graced(key):
+                bedtime = {"until": win[1].timestamp(), "end": bed["end"], "key": key, "grace_used": key in graces,
+                           "domains": focus.settings()["block"]}
+        elif bed["wind_down"]:
+            start_today = dt.replace(hour=int(bed["start"][:2]), minute=int(bed["start"][3:]), second=0, microsecond=0)
+            start_at = start_today if start_today > dt else start_today + timedelta(days=1)
+            if (start_at - dt).total_seconds() <= bed["wind_down"] * 60:
+                wind = {"at": start_at.timestamp(), "start": bed["start"], "key": f"wind|{start_at.date().isoformat()}"}
+    value = {"limits": limits, "warn": warn, "bedtime": bedtime, "wind_down": wind}
+    _pc_cache.update(ts=now, value=value)
+    return value
+
+
 # ------------------------------------------------------------------ for the phone
 
 def for_phone() -> dict:
     s = settings()
     return {"limits": s["limits"], "bedtime": s["bedtime"], "schedules": s["schedules"]}
+
+
+def pc_used_for_phone(conn, now=None) -> dict:
+    """{package: seconds used on its website on the PC today}, so the phone's limit counts both."""
+    now = now or time.time()
+    return {"date": date.fromtimestamp(now).isoformat(),
+            "used": {u["pkg"]: u["pc"] for u in limit_usage(conn, now) if u["pc"]}}

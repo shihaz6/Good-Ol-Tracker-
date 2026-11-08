@@ -242,6 +242,7 @@ def state_for_phone(conn, now=None) -> dict:
             "phone_block": focus.phone_block(conn, now=now),
             "nudge": nudge.take("phone"),
             "wellbeing": wellbeing.for_phone(),   # app limits, bedtime, scheduled focus
+            "limit_pc_used": wellbeing.pc_used_for_phone(conn, now),  # shared budget: PC site time
             "today": _today(conn, now)}           # for the app's screen + home-screen widget
 
 

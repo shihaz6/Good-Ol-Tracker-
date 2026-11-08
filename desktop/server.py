@@ -25,6 +25,7 @@ Endpoints:
   POST /api/ai/dismiss {kind, name}   reject a Groq site/app suggestion
   GET /api/nudge · POST /api/nudge/settings · POST /api/nudge/snooze   distraction alerts
   POST /nudge {action: snooze}         (token) the extension's Snooze button
+  POST /grace {key}                    (token) "5 more minutes" on a bedtime / limit block
   GET /api/phone · POST /api/phone/decide {id, allow} · POST /api/phone/unpair {id}
   GET /api/wellbeing · POST /api/wellbeing {limits, bedtime, schedules, goals}
   GET /api/insights?start=&end=        sleep + phone pickups during study
@@ -563,6 +564,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self._focus_do(self._read_json()))
             except (ValueError, TypeError, KeyError) as exc:
                 return self._send(400, {"error": str(exc) or "bad request"})
+        if self.path == "/grace":  # extension blocked page: "5 more minutes" (bedtime / limit)
+            if not self._authorized():
+                return self._send(401, {"error": "unauthorized"})
+            try:
+                wellbeing.grant_grace(str(self._read_json().get("key", "")))
+                conn = db.connect()
+                try:
+                    return self._send(200, {"ok": True, "pc_rules": wellbeing.pc_state(conn)})
+                finally:
+                    conn.close()
+            except (ValueError, TypeError) as exc:
+                return self._send(400, {"error": str(exc) or "bad request"})
         if self.path == "/nudge":  # extension: "Snooze" on a distraction alert
             if not self._authorized():
                 return self._send(401, {"error": "unauthorized"})
@@ -609,6 +622,11 @@ def ingest(payload: dict, state: SharedState) -> dict:
         n_searches = db.insert_searches(conn, searches)
         focus.record_blocks(conn, blocks)
         current_focus = focus.current(conn)  # the reply tells the extension what to block
+        try:
+            pc_rules = wellbeing.pc_state(conn)  # bedtime + daily limits on the PC too
+        except ValueError as exc:  # categories.json typo: don't break the extension's sync
+            log.warning("pc rules: %r", exc)
+            pc_rules = None
         # Health check: remember when the extension last checked in and its settings.
         db.set_meta(conn, "extension_last_seen", time.time())
         if isinstance(client, dict):
@@ -620,7 +638,8 @@ def ingest(payload: dict, state: SharedState) -> dict:
         state.media_heartbeat(bool(payload["media"]))
     return {"visits": n_visits, "pages": n_pages, "searches": n_searches, "focus": current_focus,
             "adult": focus.settings()["adult"],  # adult filter: focus | always | off
-            "nudge": nudge.take()}               # distraction alert to show, or None
+            "nudge": nudge.take(),               # distraction alert to show, or None
+            "pc_rules": pc_rules}                # bedtime / daily-limit blocks, warnings
 
 
 def start(token: str, state: SharedState) -> ThreadingHTTPServer:

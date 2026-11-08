@@ -265,17 +265,18 @@
 
       <section class="card wide" id="rules2-card">
         <h2>Limits, bedtime, schedule and goals</h2>
-        <p class="sub">App limits and bedtime are enforced on the phone (it keeps a copy, so they work away
-          from the PC too). Scheduled focus blocks sites on the PC and apps on the phone.</p>
+        <p class="sub">The same rules on both devices. A limit is one daily budget for the app and its website
+          (Facebook app + facebook.com count together; study videos don't count). Bedtime locks social and video
+          apps on the phone and the same sites in Brave. The phone keeps a copy, so it works away from the PC too.</p>
         <form id="wb-form" class="wb-form">
           <fieldset>
-            <legend>Daily app limits (phone)</legend>
-            <p class="sub">Warning at 80%, then the app is blocked until midnight (one "5 more minutes" a day).</p>
+            <legend>Daily limits (phone app + its website)</legend>
+            <p class="sub">Warning at 80%, then blocked on both until midnight (one "5 more minutes" a day on each).</p>
             <div id="wb-limits"></div>
             <button type="button" class="linkbtn" id="wb-add-limit">+ Add a limit</button>
           </fieldset>
           <fieldset>
-            <legend>Bedtime (phone)</legend>
+            <legend>Bedtime (phone + PC)</legend>
             <label class="check"><input type="checkbox" name="bed_enabled"> Lock social and video apps from
               <input type="time" name="bed_start"> to <input type="time" name="bed_end"></label>
             <label class="inline">Wind-down reminder <input type="number" name="bed_wind" min="0" max="120" class="num"> min before</label>

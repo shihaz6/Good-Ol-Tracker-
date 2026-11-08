@@ -357,7 +357,7 @@ fun RulesCard(tick: Int) {
                 Kicker("Daily app limits")
                 keys.forEach { pkg ->
                     val limMs = lim.optInt(pkg) * 60_000L
-                    val used = usage[pkg] ?: 0L
+                    val used = (usage[pkg] ?: 0L) + Guard.pcUsed(prefs, pkg)  // phone + its website on the PC
                     val frac = used.toFloat() / limMs
                     val color = when { frac >= 1f -> scheme.error; frac >= 0.8f -> sig.warning; else -> sig.success }
                     Spacer(Modifier.height(10.dp))

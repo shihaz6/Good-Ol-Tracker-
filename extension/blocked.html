@@ -3,26 +3,38 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Focus mode</title>
+  <title>Blocked</title>
   <style>
-    :root { --bg: #f7f6f2; --card: #ffffff; --ink: #1f1e1c; --muted: #6b6a66; --line: #e4e2dc; --accent: #2a6f5b; }
+    /* Same palette as the phone app: ink, focus blue, mint, amber, coral. */
+    :root { --bg: #f5f7fb; --card: #ffffff; --ink: #121620; --muted: #5b6475; --line: #e1e6ee;
+      --accent: #2563eb; --on-accent: #ffffff; --track: #e3e7ee; --warn: #b7791f; --moon: #6250d6; }
     @media (prefers-color-scheme: dark) {
-      :root { --bg: #161615; --card: #1f1f1d; --ink: #ecebe6; --muted: #a3a29c; --line: #34332f; --accent: #7cc4ad; }
+      :root { --bg: #0e1116; --card: #161a21; --ink: #e8eaf0; --muted: #9aa3b2; --line: #262c37;
+        --accent: #6ea8fe; --on-accent: #07162e; --track: #2a303b; --warn: #f5c451; --moon: #a99cff; }
     }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--ink);
       font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 16px; }
-    main { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 32px 28px;
-      max-width: 440px; width: 100%; text-align: center; }
-    .kicker { color: var(--accent); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; font-size: 12px; margin: 0; }
-    h1 { font-size: 22px; margin: 8px 0 4px; word-break: break-word; }
-    .left { font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 18px 0 2px; }
+    main { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 34px 28px 28px;
+      max-width: 460px; width: 100%; text-align: center; }
+    .kicker { color: var(--accent); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: 12px; margin: 0;
+      display: inline-flex; gap: 8px; align-items: center; }
+    .kicker::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    body.bedtime .kicker { color: var(--moon); }
+    body.limit .kicker { color: var(--warn); }
+    h1 { font-size: 22px; margin: 10px 0 6px; word-break: break-word; letter-spacing: -.01em; }
+    .left { font-size: 46px; font-weight: 650; font-variant-numeric: tabular-nums; margin: 18px 0 0; letter-spacing: -.02em; }
     .muted { color: var(--muted); margin: 0; }
-    .buttons { display: flex; flex-direction: column; gap: 8px; margin-top: 24px; }
-    button, a.btn { font: inherit; padding: 10px 14px; border-radius: 9px; border: 1px solid var(--line);
+    .meter { height: 6px; border-radius: 999px; background: var(--track); margin: 14px auto 0; max-width: 280px; overflow: hidden; }
+    .meter i { display: block; height: 100%; border-radius: 999px; background: var(--warn); }
+    .buttons { display: flex; flex-direction: column; gap: 8px; margin-top: 26px; }
+    button, a.btn { font: inherit; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line);
       background: transparent; color: var(--ink); cursor: pointer; text-decoration: none; }
-    button.primary { background: var(--accent); border-color: var(--accent); color: var(--card); font-weight: 600; }
+    button:hover, a.btn:hover { border-color: var(--accent); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
     button.quiet { border: none; color: var(--muted); font-size: 13px; }
+    button:disabled { opacity: .6; cursor: progress; }
+    #msg { margin-top: 10px; font-size: 13px; }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -31,10 +43,12 @@
     <p class="kicker" id="kicker">Focus mode</p>
     <h1 id="site">This site is blocked</h1>
     <p class="muted" id="label"></p>
+    <div class="meter" id="meter" hidden><i></i></div>
     <div class="left" id="left">--:--</div>
     <p class="muted" id="left-note">left in this focus session</p>
     <div class="buttons">
       <button class="primary" id="back" type="button">Back to work</button>
+      <button id="grace" type="button" hidden>5 more minutes</button>
       <a class="btn" id="continue" hidden>Open the page</a>
       <button class="quiet" id="stop" type="button">End focus session early</button>
     </div>

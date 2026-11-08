@@ -45,6 +45,16 @@ object Guard {
         return usage
     }
 
+    /** Time on this app's website on the PC today (ms), from the last sync. Shared daily budget. */
+    fun pcUsed(prefs: Prefs, pkg: String): Long {
+        val j = runCatching { JSONObject(prefs.pcUsed) }.getOrNull() ?: return 0L
+        if (j.optString("date") != LocalDate.now().toString()) return 0L
+        return (j.optJSONObject("used")?.optLong(pkg, 0L) ?: 0L) * 1000
+    }
+
+    /** Phone + PC use of a limited app today (ms). */
+    fun used(context: Context, prefs: Prefs, pkg: String): Long = (usageToday(context)[pkg] ?: 0L) + pcUsed(prefs, pkg)
+
     /** (start, end) of the bedtime / schedule window containing `now`, or null. */
     fun window(start: String, end: String, now: LocalDateTime = LocalDateTime.now()): Pair<LocalDateTime, LocalDateTime>? {
         val s = runCatching { LocalTime.parse(start) }.getOrNull() ?: return null
@@ -86,12 +96,14 @@ object Guard {
         }
         val limitMin = s.optJSONObject("limits")?.optInt(pkg, 0) ?: 0
         if (limitMin > 0) {
-            val used = usageToday(context)[pkg] ?: 0L
+            val used = used(context, prefs, pkg)
             val key = "limit:$pkg|${LocalDate.now()}"
             if (used >= limitMin * 60_000L && !graced(prefs, key)) {
                 val midnight = LocalDate.now().plusDays(1).atStartOfDay().ms()
+                val pc = pcUsed(prefs, pkg)
                 return Verdict("limit", "Daily limit reached",
-                    "$label: ${fmt(used)} used of your ${fmt(limitMin * 60_000L)} a day. It opens again at midnight.", midnight, key)
+                    "$label: ${fmt(used)} used of your ${fmt(limitMin * 60_000L)} a day" +
+                        (if (pc > 60_000) " (${fmt(pc)} of it on the PC)" else "") + ". It opens again at midnight.", midnight, key)
             }
         }
         return null
@@ -110,7 +122,7 @@ object Guard {
         // App limit warning at 80%.
         if (currentPkg != null) {
             val limitMin = s.optJSONObject("limits")?.optInt(currentPkg, 0) ?: 0
-            val used = usageToday(context)[currentPkg] ?: 0L
+            val used = used(context, prefs, currentPkg)
             if (limitMin > 0 && used >= limitMin * 60_000L * 0.8 && used < limitMin * 60_000L &&
                 prefs.once("warn:$currentPkg|${LocalDate.now()}")) {
                 Focus.notify(context, 50, "${Usage.label(context, currentPkg)}: ${fmt(used)} of ${fmt(limitMin * 60_000L)}",
