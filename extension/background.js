@@ -373,7 +373,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, focus: null });
         return;
       }
-      sendResponse({ ok: false, error: err.message, focus: await getFocus() });
+      sendResponse({ ok: false, offline: !!err.offline, error: err.message, focus: await getFocus() });
     });
   return true; // async response
 });

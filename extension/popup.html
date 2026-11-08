@@ -4,47 +4,179 @@
   <meta charset="utf-8">
   <title>Good ol Tracker</title>
   <style>
-    :root { color-scheme: light dark; }
-    body { font: 13px/1.45 system-ui, sans-serif; width: 270px; margin: 0; padding: 12px 14px; }
-    .site { font-weight: 700; font-size: 14px; word-break: break-all; }
-    .state { margin: 4px 0 10px; }
-    .ok { color: #1a7f37; } .warn { color: #9a6700; } .bad { color: #cf222e; }
-    button { width: 100%; padding: 7px; font: inherit; cursor: pointer; margin-top: 6px; }
-    label { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
-    a { font-size: 12px; display: block; margin-top: 10px; }
-    .focus { border-top: 1px solid rgba(128,128,128,.35); margin-top: 12px; padding-top: 10px; }
-    .focus h2 { font-size: 13px; margin: 0 0 4px; }
-    .row { display: flex; gap: 6px; }
-    .row button { margin-top: 4px; }
-    #focusLeft { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-    #focusMsg { font-size: 12px; min-height: 1em; }
+    :root {
+      color-scheme: light;
+      --page: #f9f9f7; --surface: #ffffff; --ink: #0b0b0b; --ink-2: #52514e; --muted: #77756f;
+      --line: #e1e0d9; --wash: rgba(11, 11, 11, 0.05); --wash-2: rgba(11, 11, 11, 0.09);
+      --accent: #2a78d6; --accent-ink: #ffffff;
+      --ok: #137a3a; --ok-bg: #e4f3e8; --warn: #8a5a00; --warn-bg: #fbf0d6;
+      --bad: #c22f2f; --bad-bg: #fbe5e5; --off-bg: rgba(11, 11, 11, 0.06);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --page: #121211; --surface: #1c1c1b; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #8f8d87;
+        --line: #2e2e2c; --wash: rgba(255, 255, 255, 0.06); --wash-2: rgba(255, 255, 255, 0.11);
+        --accent: #5b9bea; --accent-ink: #0b0b0b;
+        --ok: #5fcf86; --ok-bg: rgba(95, 207, 134, 0.13); --warn: #f0bf4c; --warn-bg: rgba(240, 191, 76, 0.13);
+        --bad: #f07171; --bad-bg: rgba(240, 113, 113, 0.13); --off-bg: rgba(255, 255, 255, 0.07);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      width: 300px; margin: 0; background: var(--page); color: var(--ink);
+      font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+    }
+    button { font: inherit; color: inherit; cursor: pointer; }
+    button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     [hidden] { display: none !important; }
+
+    /* header */
+    .top { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; }
+    .brand { font-weight: 650; font-size: 13px; letter-spacing: -0.01em; flex: 1; display: flex; align-items: center; gap: 7px; }
+    .conn { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+    .conn.on { background: var(--ok); }
+    .conn.off { background: var(--bad); }
+    .icon-btn {
+      border: 0; background: transparent; width: 28px; height: 28px; border-radius: 7px;
+      display: grid; place-items: center; color: var(--ink-2);
+    }
+    .icon-btn:hover { background: var(--wash); color: var(--ink); }
+    .icon-btn svg { width: 16px; height: 16px; }
+
+    main { padding: 0 10px 10px; display: grid; gap: 8px; }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; }
+
+    /* current site */
+    .site-row { display: flex; align-items: center; gap: 9px; min-width: 0; }
+    .fav {
+      width: 20px; height: 20px; border-radius: 5px; flex: none; background: var(--wash-2);
+      display: grid; place-items: center; overflow: hidden; font-size: 11px; font-weight: 700; color: var(--ink-2);
+    }
+    .fav img { width: 16px; height: 16px; }
+    .site { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; padding: 3px 9px 3px 8px;
+      border-radius: 999px; font-size: 12px; font-weight: 500; background: var(--off-bg); color: var(--ink-2);
+    }
+    .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .pill.ok { background: var(--ok-bg); color: var(--ok); }
+    .pill.warn { background: var(--warn-bg); color: var(--warn); }
+    .linkbtn {
+      display: block; margin-top: 8px; border: 0; background: none; padding: 0;
+      color: var(--accent); font-size: 12px; text-align: left;
+    }
+    .linkbtn:hover { text-decoration: underline; }
+
+    /* pause switch */
+    .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; }
+    .switch-row .hint { display: block; color: var(--muted); font-size: 12px; }
+    .switch { position: relative; flex: none; width: 34px; height: 20px; }
+    .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+    .switch .track { position: absolute; inset: 0; border-radius: 999px; background: var(--wash-2); transition: background .15s; }
+    .switch .track::after {
+      content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%;
+      background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform .15s;
+    }
+    .switch input:checked + .track { background: var(--warn); }
+    .switch input:checked + .track::after { transform: translateX(14px); }
+    .switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    /* focus */
+    .focus-head { display: flex; align-items: baseline; justify-content: space-between; }
+    h2 { font-size: 13px; font-weight: 650; margin: 0; }
+    .sub { color: var(--muted); font-size: 12px; margin: 2px 0 10px; }
+    .durations { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .durations button {
+      border: 1px solid var(--line); background: var(--page); border-radius: 8px; padding: 8px 0 7px;
+      display: grid; gap: 0; line-height: 1.15; transition: border-color .12s, background .12s;
+    }
+    .durations button:hover { border-color: var(--accent); background: var(--wash); }
+    .durations button:disabled { opacity: .5; cursor: progress; }
+    .durations b { font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; }
+    .durations span { font-size: 11px; color: var(--muted); }
+    .live { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: .05em; }
+    .live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.6s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity: .3; } }
+    @media (prefers-reduced-motion: reduce) { .live::before { animation: none; } }
+    .clock { font-size: 32px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; margin: 6px 0 0; line-height: 1.1; }
+    .clock small { font-size: 13px; font-weight: 500; color: var(--muted); letter-spacing: 0; margin-left: 4px; }
+    .bar { height: 5px; border-radius: 999px; background: var(--wash-2); margin: 10px 0 8px; overflow: hidden; }
+    .bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .4s linear; }
+    .working { font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meta { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; gap: 8px; }
+    .meta .muted { color: var(--muted); font-size: 12px; }
+    .stop {
+      border: 1px solid var(--line); background: transparent; border-radius: 7px; padding: 4px 10px; font-size: 12px; color: var(--ink-2);
+    }
+    .stop:hover { border-color: var(--bad); color: var(--bad); }
+    .stop.armed { border-color: var(--bad); background: var(--bad-bg); color: var(--bad); }
+    .msg { margin: 8px 0 0; font-size: 12px; color: var(--bad); }
+    .msg:empty { display: none; }
+
+    /* footer */
+    .primary {
+      width: 100%; border: 0; border-radius: 9px; padding: 9px; font-weight: 600;
+      background: var(--ink); color: var(--page); display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .primary:hover { opacity: .88; }
+    .primary svg { width: 14px; height: 14px; }
   </style>
 </head>
 <body>
-  <div class="site" id="site">-</div>
-  <div class="state" id="state"></div>
-  <button id="toggleBlock" hidden></button>
-  <label><input id="paused" type="checkbox"> Pause all tracking</label>
-  <div class="focus">
-    <h2>Focus mode</h2>
-    <div id="focusOff">
-      <div>Blocks distracting sites for:</div>
-      <div class="row">
-        <button type="button" data-min="25">25m</button>
-        <button type="button" data-min="50">50m</button>
-        <button type="button" data-min="90">90m</button>
+  <header class="top">
+    <div class="brand"><span class="conn" id="conn" title="Checking the desktop app…"></span>Good ol Tracker</div>
+    <button class="icon-btn" id="openOptions" type="button" title="Settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  </header>
+
+  <main>
+    <section class="card" aria-label="This tab">
+      <div class="site-row">
+        <span class="fav" id="fav" aria-hidden="true"></span>
+        <div class="site" id="site">…</div>
       </div>
-    </div>
-    <div id="focusOn" hidden>
-      <div><span id="focusLeft">--:--</span> left</div>
-      <div id="focusLabel"></div>
-      <button type="button" id="focusStop">End early</button>
-    </div>
-    <div id="focusMsg" class="bad" role="status"></div>
-  </div>
-  <button id="openDashboard">Open dashboard</button>
-  <a href="#" id="openOptions">Settings</a>
+      <div class="pill" id="state"></div>
+      <button class="linkbtn" id="toggleBlock" type="button" hidden></button>
+    </section>
+
+    <section class="card">
+      <label class="switch-row">
+        <span>Pause tracking<span class="hint" id="pauseHint">Nothing is recorded while paused</span></span>
+        <span class="switch"><input id="paused" type="checkbox" role="switch"><span class="track"></span></span>
+      </label>
+    </section>
+
+    <section class="card" aria-labelledby="focusTitle">
+      <div id="focusOff">
+        <h2 id="focusTitle">Focus mode</h2>
+        <p class="sub">Blocks distracting and adult sites.</p>
+        <div class="durations">
+          <button type="button" data-min="25"><b>25</b><span>min</span></button>
+          <button type="button" data-min="50"><b>50</b><span>min</span></button>
+          <button type="button" data-min="90"><b>90</b><span>min</span></button>
+        </div>
+      </div>
+      <div id="focusOn" hidden>
+        <div class="focus-head"><span class="live">Focusing</span></div>
+        <div class="clock"><span id="focusLeft">--:--</span><small>left</small></div>
+        <div class="bar" role="progressbar" aria-label="Session progress" aria-valuemin="0" aria-valuemax="100" id="focusBar"><i></i></div>
+        <div class="working" id="focusLabel"></div>
+        <div class="meta">
+          <span class="muted" id="focusEnds"></span>
+          <button type="button" class="stop" id="focusStop">End early</button>
+        </div>
+      </div>
+      <p class="msg" id="focusMsg" role="status"></p>
+    </section>
+
+    <button class="primary" id="openDashboard" type="button">
+      Open dashboard
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
+    </button>
+  </main>
+
   <script src="blocklist.js"></script>
   <script src="popup.js"></script>
 </body>
