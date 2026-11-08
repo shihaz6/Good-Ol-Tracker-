@@ -96,6 +96,46 @@ CREATE TABLE IF NOT EXISTS meta (
     value  TEXT NOT NULL
 );
 
+-- Full-text index over pages (search what you've read). Kept in sync by triggers, so the
+-- 60-day purge of page text also removes it from the index.
+CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
+    title, author, description, headings, body,
+    content='pages', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER IF NOT EXISTS pages_fts_insert AFTER INSERT ON pages BEGIN
+    INSERT INTO pages_fts(rowid, title, author, description, headings, body)
+    VALUES (new.rowid, new.title, new.author, new.description, new.headings, new.body);
+END;
+CREATE TRIGGER IF NOT EXISTS pages_fts_delete AFTER DELETE ON pages BEGIN
+    INSERT INTO pages_fts(pages_fts, rowid, title, author, description, headings, body)
+    VALUES ('delete', old.rowid, old.title, old.author, old.description, old.headings, old.body);
+END;
+CREATE TRIGGER IF NOT EXISTS pages_fts_update AFTER UPDATE ON pages BEGIN
+    INSERT INTO pages_fts(pages_fts, rowid, title, author, description, headings, body)
+    VALUES ('delete', old.rowid, old.title, old.author, old.description, old.headings, old.body);
+    INSERT INTO pages_fts(rowid, title, author, description, headings, body)
+    VALUES (new.rowid, new.title, new.author, new.description, new.headings, new.body);
+END;
+
+-- Focus mode: one row per session. end_ts/result stay NULL while it runs.
+CREATE TABLE IF NOT EXISTS focus_sessions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    start_ts        REAL NOT NULL,
+    planned_end_ts  REAL NOT NULL,
+    end_ts          REAL,
+    result          TEXT,               -- 'completed' | 'stopped'
+    label           TEXT NOT NULL DEFAULT ''
+);
+-- Each time a blocked site was opened during a focus session.
+CREATE TABLE IF NOT EXISTS focus_blocks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    focus_id   INTEGER NOT NULL,
+    ts         REAL NOT NULL,
+    domain     TEXT NOT NULL,
+    client_id  TEXT UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_focus_blocks ON focus_blocks(focus_id);
+
 -- Weekly AI summaries (Groq). payload = exactly what was sent.
 CREATE TABLE IF NOT EXISTS summaries (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,6 +178,10 @@ def _migrate(conn) -> None:
     if get_meta(conn, "fix_scroll_zero") is None:
         conn.execute("UPDATE sessions SET scroll_pct = NULL WHERE scroll_pct = 0")
         conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('fix_scroll_zero', '1')")
+    # Index pages that were stored before the full-text index existed.
+    if get_meta(conn, "fts_built") is None:
+        conn.execute("INSERT INTO pages_fts(pages_fts) VALUES ('rebuild')")
+        conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('fts_built', '1')")
     conn.commit()
 
 

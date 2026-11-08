@@ -9,7 +9,10 @@
 //    with password/card fields, or text you type.
 // 4. Everything is queued in chrome.storage.local and sent to the desktop app on
 //    127.0.0.1; if it isn't running, the queue waits and retries.
-// The "Pause" switch stops all of the above.
+// 5. Focus mode: while a focus session runs (started here or on the dashboard), the
+//    sites on the focus list open a "blocked" page instead. The desktop app is the source
+//    of truth; every /ingest reply says whether a session is running.
+// The "Pause" switch stops 1-3 (focus mode keeps blocking: you asked for it).
 
 importScripts("search.js", "blocklist.js");
 
@@ -73,7 +76,8 @@ chrome.permissions.onRemoved.addListener(() => { permissionReady = refreshPermis
 
 async function getQueue() {
   const queue = await getLocal("queue", {});
-  return { visits: queue.visits || [], pages: queue.pages || [], searches: queue.searches || [] };
+  return { visits: queue.visits || [], pages: queue.pages || [], searches: queue.searches || [],
+    blocks: queue.blocks || [] };
 }
 
 async function enqueue(list, item) {
@@ -162,6 +166,7 @@ async function flush(mediaPlaying) {
   const visits = queue.visits.slice(0, 500);
   const pages = queue.pages.slice(0, 100);
   const searches = queue.searches.slice(0, 500);
+  const blocks = queue.blocks.slice(0, 500);
 
   // Also send the visit still in progress, so the desktop DB shows the current site live
   // (the server updates it in place by id). Final version is queued when it closes.
@@ -175,7 +180,7 @@ async function flush(mediaPlaying) {
     version: chrome.runtime.getManifest().version,
     all_sites: allSites,
     paused: await isPaused(),
-    queued: queue.visits.length + queue.pages.length + queue.searches.length,
+    queued: queue.visits.length + queue.pages.length + queue.searches.length + queue.blocks.length,
   };
 
   let res;
@@ -183,7 +188,8 @@ async function flush(mediaPlaying) {
     res = await fetch(`${SERVER}/ingest`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Tracker-Token": token },
-      body: JSON.stringify({ visits: [...visits, ...live], pages, searches, media: !!mediaPlaying, client }),
+      body: JSON.stringify({ visits: [...visits, ...live], pages, searches, focus_blocks: blocks,
+        media: !!mediaPlaying, client }),
       signal: AbortSignal.timeout(5000),
     });
   } catch {
@@ -198,8 +204,134 @@ async function flush(mediaPlaying) {
   queue.visits.splice(0, visits.length);
   queue.pages.splice(0, pages.length);
   queue.searches.splice(0, searches.length);
+  queue.blocks.splice(0, blocks.length);
   await chrome.storage.local.set({ queue });
+
+  if (res.ok) {
+    const data = await res.json().catch(() => null);
+    if (data && "focus" in data) await applyFocus(data.focus);
+  }
 }
+
+// ---------------------------------------------------------------- focus mode
+
+const FOCUS_RULE_BASE = 1000; // DNR rule ids FOCUS_RULE_BASE + i
+
+const getFocus = async () => {
+  const f = await getLocal("focus", null);
+  return f && f.end > now() ? f : null;
+};
+
+function domainOf(hostname) {
+  const h = (hostname || "").toLowerCase();
+  return h.startsWith("www.") ? h.slice(4) : h;
+}
+
+function focusBlocks(url, focus) {
+  if (!focus) return false;
+  const u = parseUrl(url);
+  if (!u || !/^https?:$/.test(u.protocol)) return false;
+  const host = domainOf(u.hostname);
+  return focus.block.some((d) => host === d || host.endsWith("." + d));
+}
+
+const blockedPage = (url) => chrome.runtime.getURL("blocked.html") + "#" + encodeURIComponent(url);
+
+// Network-level block: the site never loads. Needs site access (the all-sites permission);
+// without it the tab check below still catches it, just after the page starts loading.
+async function setBlockRules(focus) {
+  const existing = (await chrome.declarativeNetRequest.getDynamicRules()).map((r) => r.id);
+  const addRules = (focus ? focus.block : []).slice(0, 500).map((d, i) => ({
+    id: FOCUS_RULE_BASE + i,
+    priority: 1,
+    action: { type: "redirect", redirect: { regexSubstitution: chrome.runtime.getURL("blocked.html") + "#\\0" } },
+    condition: { regexFilter: "^https?://.*", requestDomains: [d], resourceTypes: ["main_frame"] },
+  }));
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: existing, addRules });
+  } catch (err) {
+    console.warn("tracker: focus rules", err);
+  }
+}
+
+// Bring the browser in line with the desktop app's focus state (null = none running).
+async function applyFocus(next) {
+  const prev = await getLocal("focus", null);
+  const valid = next && Array.isArray(next.block) && next.end > now() ? next : null;
+  const same = prev && valid && prev.id === valid.id && prev.end === valid.end &&
+    prev.block.join() === valid.block.join();
+  if (same || (!prev && !valid)) return;
+  await chrome.storage.local.set({ focus: valid });
+  await setBlockRules(valid);
+  if (valid) {
+    await chrome.alarms.create("focus-end", { when: valid.end * 1000 + 1000 });
+    // Close the door on blocked tabs you're looking at right now.
+    const tabs = await chrome.tabs.query({ active: true });
+    for (const t of tabs) if (focusBlocks(t.url, valid)) chrome.tabs.update(t.id, { url: blockedPage(t.url) });
+  } else {
+    await chrome.alarms.clear("focus-end");
+    if (prev && prev.end <= now() + 5) {
+      chrome.notifications.create(`focus-${prev.id}`, {
+        type: "basic", iconUrl: "icon128.png", title: "Focus session done",
+        message: `${Math.round((prev.end - prev.start) / 60)} minutes${prev.label ? ` of ${prev.label}` : ""}. Nice work.`,
+      });
+    }
+  }
+}
+
+// Fallback for when the network rules can't redirect (no site access): check on navigation.
+async function enforceFocus(tab) {
+  const focus = await getFocus();
+  if (tab?.url && focusBlocks(tab.url, focus)) {
+    await chrome.tabs.update(tab.id, { url: blockedPage(tab.url) }).catch(() => {});
+  }
+}
+
+async function focusRequest(body) {
+  const token = await getLocal("token", "");
+  if (!token) throw new Error("Set the token in the extension settings first");
+  let res;
+  try {
+    res = await fetch(`${SERVER}/focus`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Tracker-Token": token },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    const err = new Error("The desktop tracker isn't running");
+    err.offline = true;
+    throw err;
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  await applyFocus(data.focus ?? null);
+  return data;
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type === "focus-blocked") {
+    const u = parseUrl(msg.url);
+    if (u) {
+      serial(() => enqueue("blocks", { id: crypto.randomUUID(), ts: now(), domain: domainOf(u.hostname) }));
+    }
+    return;
+  }
+  if (!["focus-start", "focus-stop", "focus-status"].includes(msg?.type)) return;
+  const body = { action: msg.type.slice(6), minutes: msg.minutes, label: msg.label };
+  focusRequest(body)
+    .then((data) => sendResponse({ ok: true, focus: data.focus ?? null }))
+    .catch(async (err) => {
+      if (body.action === "stop" && err.offline) {
+        // Desktop app down: never leave you locked out. End it here; the app agrees on its next reply.
+        await applyFocus(null);
+        sendResponse({ ok: true, focus: null });
+        return;
+      }
+      sendResponse({ ok: false, error: err.message, focus: await getFocus() });
+    });
+  return true; // async response
+});
 
 async function tick() {
   const tab = await refresh();
@@ -352,12 +484,13 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   serial(tick);
-  chrome.tabs.get(tabId).then(scheduleScan).catch(() => {}); // re-install scroll tracking after a reload
+  chrome.tabs.get(tabId).then((tab) => { enforceFocus(tab); scheduleScan(tab); }).catch(() => {});
 });
 chrome.windows.onFocusChanged.addListener(() => serial(tick));
 chrome.idle.onStateChanged.addListener(() => serial(tick));
 
 chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  if (change.url) enforceFocus(tab); // any tab, active or not
   if (!tab.active) return;
   if (change.url || change.title || change.audible !== undefined || change.status === "complete") {
     serial(tick);
@@ -372,10 +505,15 @@ chrome.storage.onChanged.addListener((changes) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "heartbeat") serial(tick);
+  if (alarm.name === "focus-end") serial(async () => { await applyFocus(null); await tick(); });
 });
 
 async function init() {
   await chrome.alarms.create("heartbeat", { periodInMinutes: 0.5 });
+  // A session that ended while the browser was closed: lift the blocks now.
+  const f = await getLocal("focus", null);
+  if (f && f.end <= now()) await serial(() => applyFocus(null));
+  else if (!f) await setBlockRules(null);
   serial(tick);
 }
 

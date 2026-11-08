@@ -43,6 +43,48 @@
     <section class="tiles" id="tiles" aria-label="Summary"></section>
 
     <div class="grid">
+      <section class="card wide" id="focus-card">
+        <div class="card-head">
+          <h2>Focus mode</h2>
+          <span class="muted" id="focus-sub"></span>
+        </div>
+        <div id="focus-now"></div>
+        <form id="focus-form" class="focus-form">
+          <div class="seg" role="group" aria-label="Length">
+            <button type="button" data-min="25">25m</button>
+            <button type="button" data-min="50">50m</button>
+            <button type="button" data-min="90">90m</button>
+          </div>
+          <label class="inline">or <input type="number" name="minutes" min="5" max="240" class="num" aria-label="Minutes"> min</label>
+          <input name="label" maxlength="100" placeholder="What are you working on? (optional)" class="grow">
+          <button type="submit" class="primary">Start focus</button>
+        </form>
+        <p class="formmsg" id="focus-msg" role="status"></p>
+        <div id="focus-stats"></div>
+        <div id="focus-history"></div>
+        <details id="focus-sites">
+          <summary>Blocked sites during focus</summary>
+          <p class="sub">One site per line. Subdomains are included (youtube.com also blocks m.youtube.com).
+            YouTube isn't on the list by default because you study there; add it if it pulls you away.</p>
+          <form id="focus-sites-form">
+            <textarea name="block" rows="8" spellcheck="false"></textarea>
+            <div class="buttons"><button type="submit" class="ghost">Save list</button></div>
+          </form>
+        </details>
+      </section>
+
+      <section class="card wide" id="find-card">
+        <h2>Search what you've read</h2>
+        <p class="sub">Pages, videos and your past searches. Finds by words and, with Voyage, by meaning.</p>
+        <form id="find-form" class="find-form" role="search">
+          <input type="search" name="q" placeholder="e.g. that article about B-trees" aria-label="Search" class="grow">
+          <label class="inline"><input type="checkbox" name="meaning" checked> Match by meaning</label>
+          <button type="submit" class="ghost">Search</button>
+        </form>
+        <p class="formmsg" id="find-msg" role="status"></p>
+        <div id="find-results"></div>
+      </section>
+
       <section class="card wide" id="ai-card">
         <div class="card-head">
           <h2>Weekly AI summary</h2>
@@ -104,7 +146,10 @@
       </section>
 
       <section class="card">
-        <h2>Top apps and sites</h2>
+        <div class="card-head">
+          <h2>Top apps and sites</h2>
+          <button type="button" class="linkbtn" id="apps-edit" aria-pressed="false">Change categories</button>
+        </div>
         <div id="apps"></div>
       </section>
 
@@ -115,7 +160,10 @@
       </section>
 
       <section class="card wide">
-        <h2>Pages read</h2>
+        <div class="card-head">
+          <h2>Pages read</h2>
+          <button type="button" class="linkbtn" id="pages-edit" aria-pressed="false">Change categories</button>
+        </div>
         <p class="sub">Read = how far down the page you scrolled</p>
         <div id="pages"></div>
       </section>
@@ -149,7 +197,10 @@
           <label class="span2">Send to <input type="email" name="to" placeholder="same as your Gmail"></label>
           <label class="span2">App Password <input type="password" name="password" autocomplete="new-password"
             placeholder="16 letters · leave blank to keep the saved one"></label>
-          <label class="check span2"><input type="checkbox" name="daily_enabled"> Daily recap at
+          <label class="check span2"><input type="checkbox" name="periodic_enabled"> AI recap every
+            <input type="number" name="periodic_days" min="1" max="14" class="num"> days at
+            <input type="time" name="periodic_time"></label>
+          <label class="check span2"><input type="checkbox" name="daily_enabled"> Daily numbers at
             <input type="time" name="daily_time"></label>
           <label class="check span2"><input type="checkbox" name="weekly_enabled"> Weekly AI summary (Mondays)</label>
           <div class="span2 buttons">
@@ -171,9 +222,23 @@
       </section>
 
       <section class="card wide" id="rules-card">
-        <h2>Needs a rule</h2>
-        <p class="sub">Add these to <code>categories.json</code> to sharpen your categories</p>
+        <h2>Fix categories</h2>
+        <p class="sub">Pick a category and it's saved as a rule in <code>categories.json</code>. All your
+          history is recategorised right away, and you can undo it.</p>
         <div id="rules"></div>
+        <h3 class="mini" style="margin-top:18px">Add a rule</h3>
+        <form id="rule-form" class="rule-form">
+          <select name="section" aria-label="Rule type">
+            <option value="sites">Site</option>
+            <option value="apps">App (.exe)</option>
+            <option value="channels">YouTube channel / author</option>
+          </select>
+          <input name="key" placeholder="e.g. chess.com" required class="grow" aria-label="Name">
+          <select name="category" aria-label="Category" required></select>
+          <button type="submit" class="ghost">Save rule</button>
+        </form>
+        <p class="formmsg" id="rules-msg" role="status"></p>
+        <div id="rules-recent"></div>
       </section>
     </div>
   </main>

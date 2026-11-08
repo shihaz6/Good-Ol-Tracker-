@@ -46,6 +46,39 @@ $("paused").addEventListener("change", async () => {
   await chrome.storage.local.set({ paused: $("paused").checked });
   render();
 });
+// ---------------------------------------------------------------- focus mode
+
+let focusTimer = null;
+function renderFocus(focus) {
+  const on = focus && focus.end > Date.now() / 1000;
+  $("focusOff").hidden = !!on;
+  $("focusOn").hidden = !on;
+  clearInterval(focusTimer);
+  if (!on) return;
+  $("focusLabel").textContent = focus.label ? `Working on: ${focus.label}` : "";
+  const tick = () => {
+    const s = Math.max(0, Math.round(focus.end - Date.now() / 1000));
+    if (!s) { renderFocus(null); return; }
+    const pad = (n) => String(n).padStart(2, "0");
+    $("focusLeft").textContent = `${Math.floor(s / 60)}:${pad(s % 60)}`;
+  };
+  tick();
+  focusTimer = setInterval(tick, 1000);
+}
+
+async function focusSend(msg) {
+  $("focusMsg").textContent = "";
+  const res = await chrome.runtime.sendMessage(msg);
+  if (!res?.ok) $("focusMsg").textContent = res?.error || "Something went wrong";
+  renderFocus(res?.focus ?? null);
+}
+
+document.querySelectorAll("[data-min]").forEach((b) => b.addEventListener("click", () =>
+  focusSend({ type: "focus-start", minutes: Number(b.dataset.min) })));
+$("focusStop").addEventListener("click", () => focusSend({ type: "focus-stop" }));
+chrome.storage.local.get("focus").then(({ focus }) => renderFocus(focus));
+chrome.runtime.sendMessage({ type: "focus-status" }).then((res) => renderFocus(res?.focus ?? null)).catch(() => {});
+
 $("openDashboard").addEventListener("click", () => chrome.tabs.create({ url: "http://127.0.0.1:47321/" }));
 $("openOptions").addEventListener("click", (e) => { e.preventDefault(); chrome.runtime.openOptionsPage(); });
 render();

@@ -61,7 +61,7 @@ def print_right_now(conn, rules):
         if rules:
             if source == "browser":
                 page = categorize._load_pages(conn, [url]).get(url)
-                cat = rules.classify_browser(app, title, page)[0]
+                cat = rules.classify_browser(app, title, page, url)[0]
             else:
                 cat = rules.classify_desktop(app, title)[0]
         print(f"  {source:<8} {cat:<13} {app[:20]:<20} {title[:50]}  (for {fmt(end - start).strip()})")

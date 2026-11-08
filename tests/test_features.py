@@ -221,7 +221,7 @@ class MailerTest(unittest.TestCase):
 
     def test_daily_schedule_once_per_day(self):
         mailer.save_settings({"address": "a@gmail.com", "daily_enabled": True, "daily_time": "21:00",
-                              "weekly_enabled": False})
+                              "weekly_enabled": False, "periodic_enabled": False})
         original = mailer.send
         mailer.send = lambda *a, **k: FakeSMTP.sent.append(a[0])
         try:
@@ -232,9 +232,11 @@ class MailerTest(unittest.TestCase):
             mailer.send = original
 
     def test_weekly_email_sent_once_for_a_full_week_summary(self):
-        mailer.save_settings({"address": "a@gmail.com", "daily_enabled": False, "weekly_enabled": True})
+        mailer.save_settings({"address": "a@gmail.com", "daily_enabled": False, "weekly_enabled": True,
+                              "periodic_enabled": False})
         self.conn.execute("INSERT INTO summaries (created_ts, start_day, end_day, model, payload, text)"
-                          " VALUES (0, '2026-11-09', '2026-11-15', 'm', '{}', '## Overview\nGreat week.')")
+                          " VALUES (0, '2026-11-02', '2026-11-08', 'm', '{}', '## Overview\nGreat week.')")
+        desktop(self.conn, at(9, day=-7), at(10, day=-7), "Code.exe")  # some activity the week before
         original = mailer.send
         mailer.send = lambda *a, **k: FakeSMTP.sent.append(a)
         try:
@@ -245,6 +247,55 @@ class MailerTest(unittest.TestCase):
             self.assertIn("This week vs last week", text)
         finally:
             mailer.send = original
+
+    def test_every_3_days_recap_with_ai_summary(self):
+        import weekly
+        mailer.save_settings({"address": "a@gmail.com", "daily_enabled": False, "weekly_enabled": False,
+                              "periodic_enabled": True, "periodic_days": 3, "periodic_time": "21:00"})
+        generated = []
+
+        def fake_generate(conn, start, end, rules=None):
+            generated.append((start, end))
+            return {"text": "## Overview\nSolid three days."}
+        orig_send, orig_gen = mailer.send, weekly.generate
+        mailer.send = lambda *a, **k: FakeSMTP.sent.append(a)
+        weekly.generate = fake_generate
+        night = lambda d: datetime.combine(DAY + timedelta(days=d), datetime.min.time()).replace(hour=21, minute=30)
+        try:
+            self.assertEqual(mailer.maybe_send(self.conn, night(0)), ["periodic"])   # first one
+            self.assertEqual(generated, [(DAY - timedelta(days=2), DAY)])            # covers the last 3 days
+            subject, text, _ = FakeSMTP.sent[0]
+            self.assertIn("3 days", subject)
+            self.assertIn("Solid three days.", text)
+            self.assertNotIn("very private search", text)
+            self.assertEqual(mailer.maybe_send(self.conn, night(1)), [])             # day +1: not yet
+            self.assertEqual(mailer.maybe_send(self.conn, night(2)), [])             # day +2: not yet
+            self.assertEqual(mailer.maybe_send(self.conn, night(3))[:0], [])         # day +3: due (no data -> skipped)
+            self.assertEqual(db.get_meta(self.conn, "last_periodic_email"), (DAY + timedelta(days=3)).isoformat())
+        finally:
+            mailer.send, weekly.generate = orig_send, orig_gen
+
+    def test_recap_still_sends_numbers_if_groq_fails(self):
+        import weekly
+        mailer.save_settings({"address": "a@gmail.com"})
+        orig = weekly.generate
+
+        def boom(*a, **k):
+            raise weekly.SummaryError("Groq rate limit reached")
+        weekly.generate = boom
+        try:
+            subject, text, body = mailer.build_periodic(self.conn, DAY, 3)
+        finally:
+            weekly.generate = orig
+        self.assertIn("AI summary unavailable: Groq rate limit reached", text)
+        self.assertIn("Productive: 2h 00m", text)
+
+    def test_periodic_settings_validation(self):
+        with self.assertRaises(ValueError):
+            mailer.save_settings({"periodic_days": 0})
+        with self.assertRaises(ValueError):
+            mailer.save_settings({"periodic_days": "abc"})
+        self.assertEqual(mailer.save_settings({"periodic_days": "5"})["periodic_days"], 5)
 
     def test_not_configured_sends_nothing(self):
         keys.load_key = lambda name: None

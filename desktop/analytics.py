@@ -152,11 +152,21 @@ def _right_now(conn, rules):
         start, end, app, title, url = row
         if source == "browser":
             page = categorize._load_pages(conn, [url]).get(url)
-            cat = rules.classify_browser(app, title, page)[0]
+            cat = rules.classify_browser(app, title, page, url)[0]
         else:
             cat = rules.classify_desktop(app, title)[0]
         out[source] = {"app": app, "title": title, "category": cat, "seconds": round(end - start)}
     return out
+
+
+def _rule_info(rules, name: str, kind: str) -> dict:
+    """Which rule section an app/site row edits, and its current rule (None = no rule yet).
+    Browser exes aren't editable: their time is split by site instead."""
+    if kind == "site":
+        return {"rule_section": "sites", "rule": rules.site_rule(name)}
+    if kind == "app" and name.lower() not in categorize.BROWSERS:
+        return {"rule_section": "apps", "rule": rules.apps.get(name.lower())}
+    return {"rule_section": None, "rule": None}
 
 
 def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
@@ -173,7 +183,8 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
     by_hour = [defaultdict(float) for _ in range(24)]  # hour -> category -> seconds
     apps = defaultdict(lambda: {"seconds": 0.0, "cats": Counter(), "kind": "app"})
     pages = defaultdict(lambda: {"seconds": 0.0, "title": "", "domain": "", "category": ""})
-    unmatched, unsure = defaultdict(float), defaultdict(float)
+    unmatched = defaultdict(float)
+    unsure = defaultdict(lambda: {"seconds": 0.0, "urls": set()})
 
     for it in items:
         secs = it.seconds
@@ -194,7 +205,10 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
         if not it.matched:
             unmatched[("site" if it.source == "browser" else "app", it.app)] += secs
         elif it.category == rules.fallback["content"]:
-            unsure[(it.app, it.title)] += secs
+            u = unsure[(it.app, it.title)]
+            u["seconds"] += secs
+            if it.url:
+                u["urls"].add(it.url)
 
     active = sum(by_cat.values())
     pc_active = sum(it.seconds for it in items if it.source != "manual")
@@ -211,8 +225,9 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
         if p["seconds"] > m["best"]:
             m["url"], m["best"] = url, p["seconds"]
     top_pages = sorted(merged.values(), key=lambda m: -m["seconds"])[:25]
+    top_unsure = sorted(unsure.items(), key=lambda kv: -kv[1]["seconds"])[:10]
     urls = [u for m in top_pages for u in m["urls"]]
-    scanned = categorize._load_pages(conn, urls)
+    scanned = categorize._load_pages(conn, urls + [u for _, v in top_unsure for u in v["urls"]])
     scroll = {}
     for i in range(0, len(urls), 500):
         chunk = urls[i:i + 500]
@@ -264,11 +279,12 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
         "timeline": _timeline(items, days),
         "top_apps": [
             {"name": name, "kind": a["kind"], "seconds": round(a["seconds"]),
-             "category": a["cats"].most_common(1)[0][0]}
+             "category": a["cats"].most_common(1)[0][0], **_rule_info(rules, name, a["kind"])}
             for (name, _), a in sorted(apps.items(), key=lambda kv: -kv[1]["seconds"])[:15]
         ],
         "pages": [
-            {"url": m["url"], "domain": m["domain"], "seconds": round(m["seconds"]), "category": m["category"],
+            {"url": m["url"], "urls": m["urls"][:20], "domain": m["domain"], "seconds": round(m["seconds"]),
+             "category": m["category"], "page_rule": next((rules.pages[u] for u in m["urls"] if u in rules.pages), None),
              "title": next(((scanned.get(u) or {}).get("title") for u in m["urls"] if (scanned.get(u) or {}).get("title")),
                            m["title"]),
              "scroll": max((scroll[u] for u in m["urls"] if scroll.get(u) is not None), default=None),
@@ -287,8 +303,10 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
         "search_count": len(search_rows),
         "unmatched": [{"kind": k, "name": n, "seconds": round(s)}
                       for (k, n), s in sorted(unmatched.items(), key=lambda kv: -kv[1])[:10]],
-        "unsure": [{"site": site, "title": title, "seconds": round(s)}
-                   for (site, title), s in sorted(unsure.items(), key=lambda kv: -kv[1])[:10]],
+        "unsure": [{"site": site, "title": title, "seconds": round(v["seconds"]), "urls": sorted(v["urls"])[:20],
+                    "channel": next(((scanned.get(u) or {}).get("author") for u in v["urls"]
+                                     if (scanned.get(u) or {}).get("author")), None)}
+                   for (site, title), v in top_unsure],
         "now": _right_now(conn, rules) if start_day <= date.today() <= end_day else None,
     }
 
@@ -346,6 +364,22 @@ def trends(conn, end_day: date, days: int = 30, rules=None) -> dict:
         "this_week": week(keys[-7:]),
         "last_week": week(keys[-14:-7]),
     }
+
+
+def compare_periods(conn, start_day: date, end_day: date, rules=None):
+    """Stats for [start_day, end_day] and for the equally long period just before it."""
+    rules = rules or categorize.Rules()
+    n = (end_day - start_day).days + 1
+    all_days = [start_day - timedelta(days=n - i) for i in range(2 * n)]
+    items = categorize.categorise(conn, _midnight(all_days[0]), _midnight(end_day + timedelta(days=1)), rules)
+    per = _split_by_day(sorted(items, key=lambda it: it.start), all_days)
+    keys = list(per)
+
+    def stats(day_keys):
+        merged = sorted((it for k in day_keys for it in per[k]), key=lambda it: it.start)
+        return {"start": day_keys[0], "end": day_keys[-1], **_period_stats(merged, rules.productive)}
+
+    return stats(keys[n:]), stats(keys[:n])
 
 
 # ----------------------------------------------------------------------------- exports

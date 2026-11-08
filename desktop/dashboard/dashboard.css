@@ -280,11 +280,62 @@ h3.mini { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0 0 6p
   border-radius: 8px; padding: 6px 8px; min-width: 0;
 }
 .form-grid input[type=checkbox] { width: 16px; height: 16px; padding: 0; }
+.form-grid input.num { width: 4.5em; }
 .form-grid .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 .formmsg { min-height: 20px; margin: 8px 0 0; font-size: 13px; color: var(--ink-2); }
 .formmsg.bad { color: var(--error); }
 .steps { padding-left: 20px; margin: 8px 0; font-size: 13px; color: var(--ink-2); }
 .linkbtn { background: none; border: 0; color: var(--ink-2); text-decoration: underline; padding: 0; font-size: 13px; }
+
+/* ------------------------------------------------------------ inline forms (focus, search, rules) */
+
+.focus-form, .find-form, .rule-form { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+.focus-form input, .find-form input, .rule-form input, .rule-form select, select.catsel, #focus-sites-form textarea {
+  font: inherit; color: var(--ink); background: var(--page); border: 1px solid var(--ring);
+  border-radius: 8px; padding: 6px 8px; min-width: 0;
+}
+.grow { flex: 1 1 220px; }
+input.num { width: 4.5em; }
+label.inline { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 13px; }
+label.inline input[type=checkbox] { width: 16px; height: 16px; margin: 0; }
+.primary { background: var(--ink); color: var(--page); border: 1px solid var(--ink); border-radius: 8px; padding: 6px 14px; font-weight: 600; }
+.primary:hover { opacity: 0.9; }
+.primary:disabled { opacity: 0.6; cursor: progress; }
+select.catsel { padding: 3px 6px; font-size: 13px; max-width: 100%; }
+#focus-sites-form textarea { width: 100%; font: 13px/1.5 ui-monospace, Consolas, monospace; resize: vertical; }
+#focus-sites-form .buttons { margin-top: 8px; }
+.focus-form .seg button { padding: 6px 12px; }
+
+/* focus: running state */
+.focus-live { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 4px 0 6px; }
+.focus-live .left { font-size: 44px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.focus-live .what { color: var(--ink-2); }
+.focus-live .what b { color: var(--ink); }
+.statrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin: 16px 0 12px; }
+.stat { border: 1px solid var(--ring); border-radius: 10px; padding: 10px 12px; }
+.stat .label { color: var(--ink-2); font-size: 12px; }
+.stat .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.result { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.result .ico { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%; font-size: 9px; color: #fff; }
+.result.good .ico { background: #0ca30c; }
+.result.warn .ico { background: #fab219; color: #0b0b0b; }
+.result.run .ico { background: var(--cat-1); }
+
+/* search results */
+.results { list-style: none; margin: 8px 0 0; padding: 0; }
+.results li { padding: 10px 0; border-bottom: 1px solid var(--grid); }
+.results li:last-child { border-bottom: 0; }
+.results .t { font-weight: 600; text-decoration: none; }
+.results .t:hover { text-decoration: underline; }
+.results .meta { font-size: 12px; color: var(--muted); margin-top: 2px; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.results .snip { font-size: 13px; color: var(--ink-2); margin-top: 4px; overflow-wrap: anywhere; }
+mark { background: var(--wash); color: var(--ink); font-weight: 600; border-radius: 3px; padding: 0 2px;
+  box-shadow: inset 0 -2px 0 var(--cat-4); }
+.badge { font-size: 11px; color: var(--ink-2); border: 1px solid var(--ring); border-radius: 999px; padding: 0 7px; }
+
+.recent { list-style: none; padding: 0; margin: 8px 0 0; font-size: 13px; color: var(--ink-2); }
+.recent li { padding: 3px 0; }
+.scope { font-size: 12px; color: var(--muted); }
 
 /* ------------------------------------------------------------ print / PDF */
 
@@ -298,7 +349,7 @@ h3.mini { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0 0 6p
   }
   body { background: #fff; }
   .health, .filters .seg, .filters .day, .filters .menu, #theme, button, form, .formmsg,
-  #email-card, #rules-card, details > summary, #preview { display: none !important; }
+  #email-card, #rules-card, #focus-card, #find-card, .linkbtn, details > summary, #preview { display: none !important; }
   details[open] > *:not(summary) { display: block; }
   .card, .tile { break-inside: avoid; box-shadow: none; }
   .grid { gap: 10px; }

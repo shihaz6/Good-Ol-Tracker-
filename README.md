@@ -123,6 +123,56 @@ Today's view refreshes every 30 seconds.
 
 What counts as productive is the `"productive"` list in `categories.json`.
 
+## Fixing categories from the dashboard
+
+- **Fix categories** card: everything with no rule yet, and Unsure pages/videos, each with
+  a category picker. For a YouTube video you choose "All from <channel>" (a `channels`
+  rule) or "Just this one" (a `pages` rule for that URL).
+- **Change categories** links on *Top apps and sites* (whole app/site rule; sites can stay
+  "By page content") and *Pages read* (that page only).
+- **Add a rule** form for sites, apps and channels you want set up front.
+- Every change is written into `categories.json` in place (your layout and line endings
+  are kept), checked by loading it exactly as the categoriser does, and all history is
+  recategorised at once. **Undo last change** reverts it byte for byte; it refuses if
+  you edited the file by hand since, so it never throws your own edits away. History of
+  dashboard changes: `data\rules_history.json`.
+- Rule order: page rule > site rule > channel > keywords > AI > fallback.
+
+## Search what you've read
+
+The **Search what you've read** card searches every scanned page (title, channel,
+description, headings, text), pages you visited but that were never scanned (by tab
+title), and your past searches.
+
+- **Words:** SQLite full-text index (`pages_fts`, prefix matches, accents ignored, filler
+  words skipped). Offline.
+- **Meaning** (checkbox, needs the Voyage key): your search text is embedded and compared
+  with the page vectors the AI categoriser already stored. Only the words you type are
+  sent to Voyage. Calibrated so unrelated pages (similarity ~0.35) don't show.
+- Results are merged (rank fusion), with time spent, last visit and how far you read.
+- Page text is purged after 60 days; after that a page is still found by title/channel.
+
+## Focus mode
+
+Start a session from the dashboard's **Focus mode** card or the extension popup (25 / 50 /
+90 min or any length 5-240). While it runs, the sites on the focus list open a "blocked"
+page in Brave showing the time left, with *Back to work* and a two-click *End early*.
+
+- Default list: every site your `categories.json` marks Entertainment or Social, plus
+  reddit.com and 9gag.com. YouTube isn't included (you study there); edit the list under
+  *Blocked sites during focus* (subdomains included).
+- Blocking happens in the network layer when the extension has all-sites access (the
+  page never loads), with a tab check as fallback.
+- Starting from the popup blocks instantly; from the dashboard within ~30 s (the
+  extension's next heartbeat). A Windows notification says when a session finishes.
+- Each session is scored afterwards: **on task** = share of the session spent in your
+  productive categories, plus which blocked sites you tried to open. Shown on the card
+  (last 14 days) and in the 3-day email.
+- If the desktop tracker isn't running, *End early* still works (never locks you out).
+- Desktop apps aren't blocked, only sites in the browser.
+- Needs extension **v0.6.0**: reload it in `brave://extensions` (it asks for the new
+  "block content" and notifications permissions).
+
 ## Email reports (Gmail)
 
 Set up on the dashboard's **Email reports** card: your Gmail address, where to send,
@@ -132,8 +182,9 @@ myaccount.google.com/apppasswords, revoke it there any time). It's saved to
 
 - **Daily recap** at a time you choose (off by default): today's totals, categories,
   focus, top apps/sites and topics.
-- **Weekly AI summary** (on by default): emailed once each Monday's summary is written,
-  with this week vs last week.
+- **AI recap every N days** (on by default, every 3 days at 21:00): a Groq summary of
+  those days, numbers vs the N days before, categories and focus sessions.
+- **Weekly AI summary** (off by default): emailed once each Monday's summary is written.
 - **Send a test email** sends today's recap right away.
 
 Emails never contain page text, page titles, URLs or your searches.
@@ -175,7 +226,8 @@ How something gets its category:
 3. Nothing matched -> keywords on the window/tab title, else `Other` (apps) / `Browsing` (sites).
 
 The report lists **Not categorised yet** and **Unsure** items, the things worth adding
-rules for.
+rules for; the dashboard's **Fix categories** card lets you set them with one click.
+`"pages"` holds per-URL overrides set from the dashboard.
 
 ## Tests
 

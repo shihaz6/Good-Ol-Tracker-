@@ -22,6 +22,7 @@ from email.message import EmailMessage
 import analytics
 import categorize
 import db
+import focus
 import keys
 import weekly
 
@@ -30,7 +31,13 @@ log = logging.getLogger("tracker")
 SETTINGS_PATH = db.DATA_DIR / "email.json"
 SMTP_HOST, SMTP_PORT = "smtp.gmail.com", 465
 DASHBOARD = "http://127.0.0.1:47321/"
-DEFAULTS = {"address": "", "to": "", "daily_enabled": False, "daily_time": "21:00", "weekly_enabled": True}
+DEFAULTS = {
+    "address": "", "to": "",
+    "daily_enabled": False, "daily_time": "21:00",            # today's numbers, every evening
+    "periodic_enabled": True, "periodic_days": 3, "periodic_time": "21:00",  # AI recap every N days
+    "weekly_enabled": False,                                  # Monday's weekly AI summary
+}
+TIME_RE = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -53,14 +60,23 @@ def save_settings(new: dict) -> dict:
     address = str(new.get("address", s["address"])).strip()
     to = str(new.get("to", s["to"])).strip() or address
     daily_time = str(new.get("daily_time", s["daily_time"])).strip()
+    periodic_time = str(new.get("periodic_time", s["periodic_time"])).strip()
     if address and not EMAIL_RE.match(address):
         raise ValueError("Gmail address doesn't look like an email address")
     if to and not EMAIL_RE.match(to):
         raise ValueError("'Send to' doesn't look like an email address")
-    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", daily_time):
-        raise ValueError("Daily time must be HH:MM (24-hour)")
-    s.update(address=address, to=to, daily_time=daily_time,
+    if not TIME_RE.fullmatch(daily_time) or not TIME_RE.fullmatch(periodic_time):
+        raise ValueError("Times must be HH:MM (24-hour)")
+    try:
+        periodic_days = int(new.get("periodic_days", s["periodic_days"]))
+    except (TypeError, ValueError):
+        raise ValueError("'Every N days' must be a number") from None
+    if not 1 <= periodic_days <= 14:
+        raise ValueError("'Every N days' must be between 1 and 14")
+    s.update(address=address, to=to, daily_time=daily_time, periodic_time=periodic_time,
+             periodic_days=periodic_days,
              daily_enabled=bool(new.get("daily_enabled", s["daily_enabled"])),
+             periodic_enabled=bool(new.get("periodic_enabled", s["periodic_enabled"])),
              weekly_enabled=bool(new.get("weekly_enabled", s["weekly_enabled"])))
     db.DATA_DIR.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(json.dumps(s, indent=2), encoding="utf-8")
@@ -174,26 +190,67 @@ def build_daily(conn, day: date, rules=None):
     return subject, text, body
 
 
-def build_weekly(conn, summary: dict, rules=None):
-    end = date.fromisoformat(summary["end"])
-    tr = analytics.trends(conn, end, days=14, rules=rules)
-    now_w, prev_w = tr["this_week"], tr["last_week"]
-    rng = f"{date.fromisoformat(summary['start']).strftime('%d %b')} – {end.strftime('%d %b')}"
-    subject = f"Good ol Tracker · week {rng}: {_dur(now_w['productive'])} productive"
+def build_period(conn, start: date, end: date, ai_text: str | None, ai_note: str = "", rules=None):
+    """Recap email for any period: AI summary (if available) + numbers vs the period before."""
+    now_p, prev_p = analytics.compare_periods(conn, start, end, rules)
+    n = (end - start).days + 1
+    span = "week" if n == 7 else f"{n} days"
+    rng = f"{start.strftime('%d %b')} – {end.strftime('%d %b')}"
+    subject = f"Good ol Tracker · {span} {rng}: {_dur(now_p['productive'])} productive"
+    this, vs = ("This week", "last week") if n == 7 else (f"These {n} days", f"the previous {n} days")
+
+    def d(a, b, unit="dur", good_up=True):
+        return _delta(a, b, unit, good_up).replace("last week", vs) if prev_p["active"] else ""
+
     compare = [
-        ("Active", _dur(now_w["active"]) + _delta(now_w["active"], prev_w["active"])),
-        ("Productive", _dur(now_w["productive"]) + _delta(now_w["productive"], prev_w["productive"])),
-        ("Longest focus", _dur(now_w["longest_focus"]) + _delta(now_w["longest_focus"], prev_w["longest_focus"])),
-        ("Deep focus sessions", f"{now_w['deep_count']}" + _delta(now_w["deep_count"], prev_w["deep_count"], "n")),
-        ("Switches per hour", f"{now_w['switches_per_hour'] or '-'}"
-         + _delta(now_w["switches_per_hour"], prev_w["switches_per_hour"], "n", good_up=False)),
+        ("Active", _dur(now_p["active"]) + d(now_p["active"], prev_p["active"])),
+        ("Productive", _dur(now_p["productive"]) + d(now_p["productive"], prev_p["productive"])),
+        ("Longest focus", _dur(now_p["longest_focus"]) + d(now_p["longest_focus"], prev_p["longest_focus"])),
+        ("Deep focus sessions", f"{now_p['deep_count']}" + d(now_p["deep_count"], prev_p["deep_count"], "n")),
+        ("Switches per hour", f"{now_p['switches_per_hour'] or '-'}"
+         + d(now_p["switches_per_hour"], prev_p["switches_per_hour"], "n", good_up=False)),
     ]
-    text = "\n".join([subject, "", summary["text"], "", "This week vs last week:",
-                      *[f"  {a}: {b}" for a, b in compare], "", f"Dashboard: {DASHBOARD}"])
-    body = _html_doc(subject, [_html_markdown(summary["text"]),
-                               "<h3 style='font-size:15px;margin:16px 0 4px'>This week vs last week</h3>",
-                               _html_table(compare)])
+    f = focus.history(conn, analytics._midnight(start), analytics._midnight(end + timedelta(days=1)), rules)
+    if f["sessions"]:
+        line = f"{f['completed']} finished, {f['stopped']} ended early · {_dur(f['focused_seconds'])}"
+        if f["blocked"]:
+            line += f" · {f['blocked']} blocked site visits"
+        compare.append(("Focus sessions", line))
+    cats = sorted(now_p["by_category"].items(), key=lambda kv: -kv[1])
+    if ai_text:
+        ai_block = ai_text
+    elif ai_note:
+        ai_block = f"(AI summary unavailable: {ai_note})"
+    else:
+        ai_block = ""
+    heading = f"{this} vs {vs}" if prev_p["active"] else this
+    text = "\n".join([subject, "", ai_block, "", f"{heading}:", *[f"  {a}: {b}" for a, b in compare], "",
+                      "By category:", *[f"  {c}: {_dur(v)}" for c, v in cats], "", f"Dashboard: {DASHBOARD}"])
+    body = _html_doc(subject, [
+        _html_markdown(ai_text) if ai_text else (f"<p style='color:#898781'>{html.escape(ai_block)}</p>" if ai_block else ""),
+        f"<h3 style='font-size:15px;margin:16px 0 4px'>{html.escape(heading)}</h3>", _html_table(compare),
+        "<h3 style='font-size:15px;margin:0 0 4px'>By category</h3>", _html_table([(c, _dur(v)) for c, v in cats]),
+    ])
     return subject, text, body
+
+
+def build_weekly(conn, summary: dict, rules=None):
+    return build_period(conn, date.fromisoformat(summary["start"]), date.fromisoformat(summary["end"]),
+                        summary["text"], rules=rules)
+
+
+def build_periodic(conn, end: date, days: int, rules=None):
+    """Every-N-days recap: writes a fresh AI summary for the period (Groq) and builds the email.
+    Raises MailError if there was no real activity (nothing worth emailing)."""
+    start = end - timedelta(days=days - 1)
+    s = analytics.summary(conn, start, end, rules)
+    if s["totals"]["active"] < weekly.MIN_ACTIVE_SECONDS:
+        raise MailError(f"Almost no activity from {start} to {end}; skipped")
+    try:
+        ai_text, note = weekly.generate(conn, start, end, rules)["text"], ""
+    except weekly.SummaryError as exc:
+        ai_text, note = None, str(exc)  # still send the numbers
+    return build_period(conn, start, end, ai_text, note, rules)
 
 
 # --------------------------------------------------------------------- sending
@@ -236,6 +293,15 @@ def maybe_send(conn, now: datetime | None = None) -> list:
             sent.append("daily")
         except MailError as exc:
             log.warning("daily email not sent: %s", exc)
+    if s["periodic_enabled"] and now.strftime("%H:%M") >= s["periodic_time"]:
+        last = db.get_meta(conn, "last_periodic_email")
+        if last is None or (now.date() - date.fromisoformat(last)).days >= s["periodic_days"]:
+            db.set_meta(conn, "last_periodic_email", today)
+            try:
+                send(*build_periodic(conn, now.date(), s["periodic_days"]))
+                sent.append("periodic")
+            except MailError as exc:
+                log.warning("%s-day email not sent: %s", s["periodic_days"], exc)
     latest = weekly.latest(conn)
     if (s["weekly_enabled"] and latest and date.fromisoformat(latest["start"]).weekday() == 0
             and date.fromisoformat(latest["end"]) - date.fromisoformat(latest["start"]) == timedelta(days=6)

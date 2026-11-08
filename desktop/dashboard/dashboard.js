@@ -4,7 +4,7 @@
 const REFRESH_MS = 30000;
 const $ = (sel) => document.querySelector(sel);
 
-const state = { range: "today", day: null, data: null, timer: null };
+const state = { range: "today", day: null, data: null, timer: null, editApps: false, editPages: false };
 
 // ------------------------------------------------------------------ helpers
 
@@ -409,8 +409,109 @@ function renderTimeline(d) {
   ));
 }
 
+// ------------------------------------------------------------------ editing categories
+
+const CONTENT = "content";
+
+// A <select> of categories. `current` is preselected; "" shows a "Choose…" prompt.
+function catSelect(current, { content = false, label = "Category" } = {}) {
+  const sel = el("select", "catsel");
+  sel.setAttribute("aria-label", label);
+  if (!current) sel.append(new Option("Choose…", "", true, true));
+  if (content) sel.append(new Option("By page content", CONTENT, false, current === CONTENT));
+  (state.data?.categories || []).forEach((c) => sel.append(new Option(c, c, false, c === current)));
+  return sel;
+}
+
+async function saveRules(changes, select) {
+  if (select) select.disabled = true;
+  try {
+    const r = await post("/api/rules", { changes });
+    say("#rules-msg", r.changed.length ? `Saved: ${r.changed.join(", ")}` : "No change needed.");
+    state.trendsAt = 0;
+    await Promise.all([load(), loadRecentRules()]);
+  } catch (err) {
+    say("#rules-msg", `Couldn't save: ${err.message}`, true);
+    $("#rules-card").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (select) select.disabled = false;
+  }
+}
+
+async function loadRecentRules() {
+  try {
+    const res = await fetch("/api/rules/recent", { cache: "no-store" });
+    const { recent } = await res.json();
+    const box = $("#rules-recent");
+    if (!recent.length) { box.replaceChildren(); return; }
+    const head = el("div", "card-head");
+    head.append(el("h3", "mini", "Recent changes"));
+    const undo = el("button", "linkbtn", "Undo last change");
+    undo.type = "button";
+    undo.addEventListener("click", async () => {
+      try {
+        const r = await post("/api/rules/undo");
+        say("#rules-msg", `Undone: ${r.undone.join(", ")}`);
+        state.trendsAt = 0;
+        await Promise.all([load(), loadRecentRules()]);
+      } catch (err) { say("#rules-msg", err.message, true); }
+    });
+    head.append(undo);
+    const list = el("ul", "recent");
+    recent.forEach((h) => list.append(el("li", null,
+      `${fmtWhen(h.ts, true)} · ${h.changes.join(", ")}`)));
+    box.replaceChildren(head, list);
+  } catch { /* ignore */ }
+}
+
+$("#rule-form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const f = ev.target.elements;
+  saveRules([{ section: f.section.value, key: f.key.value, category: f.category.value }])
+    .then(() => { if (!$("#rules-msg").classList.contains("bad")) f.key.value = ""; });
+});
+$("#rule-form").elements.section.addEventListener("change", (e) => {
+  const ph = { sites: "e.g. chess.com", apps: "e.g. Spotify.exe", channels: "e.g. Neso Academy" };
+  $("#rule-form").elements.key.placeholder = ph[e.target.value];
+  fillRuleFormCategories();
+});
+
+function fillRuleFormCategories() {
+  const f = $("#rule-form").elements;
+  const keep = f.category.value;
+  const sel = catSelect(keep || "", { content: f.section.value === "sites" });
+  f.category.replaceChildren(...sel.options);
+  if (keep) f.category.value = keep;
+}
+
+function toggleEdit(btn, key) {
+  btn.addEventListener("click", () => {
+    state[key] = !state[key];
+    btn.setAttribute("aria-pressed", String(state[key]));
+    btn.textContent = state[key] ? "Done" : "Change categories";
+    if (state.data) render(state.data);
+  });
+}
+toggleEdit($("#apps-edit"), "editApps");
+toggleEdit($("#pages-edit"), "editPages");
+
+function renderAppsEditor(d) {
+  const rows = d.top_apps.map((a) => {
+    let pick = el("span", "muted", a.kind === "offline" ? "logged by you" : "split by site");
+    if (a.rule_section) {
+      pick = catSelect(a.rule || "", { content: a.rule_section === "sites", label: `Category for ${a.name}` });
+      pick.addEventListener("change", () => saveRules([{ section: a.rule_section, key: a.name, category: pick.value }], pick));
+    }
+    return [a.name, a.kind, fmtDur(a.seconds), pick];
+  });
+  const wrap = el("div");
+  wrap.append(el("p", "sub", "Sets a rule for the whole app or site. For YouTube and similar, keep \"By page content\" so each video is judged on its own."),
+    table([{ label: "Name", cls: "title" }, { label: "Type" }, { label: "Time", num: true }, { label: "Rule" }], rows));
+  $("#apps").replaceChildren(wrap);
+}
+
 function renderApps(d) {
   if (!d.top_apps.length) { $("#apps").replaceChildren(empty("Nothing yet.")); return; }
+  if (state.editApps) { renderAppsEditor(d); return; }
   const max = d.top_apps[0].seconds;
   const grid = el("div", "bars thin");
   d.top_apps.forEach((a) => {
@@ -469,7 +570,13 @@ function renderPages(d) {
         meter.append(fill);
         read.append(meter, document.createTextNode(`${Math.round(p.scroll)}%`));
       }
-      return [link, p.domain, fmtDur(p.seconds), read, catLabel(p.category)];
+      let cat = catLabel(p.category);
+      if (state.editPages) {
+        cat = catSelect(p.category, { label: `Category for ${p.title || p.url}` });
+        cat.addEventListener("change", () => saveRules(
+          p.urls.map((u) => ({ section: "pages", key: u, category: cat.value })), cat));
+      }
+      return [link, p.domain, fmtDur(p.seconds), read, cat];
     }),
   ));
 }
@@ -485,20 +592,43 @@ function renderSearches(d) {
 }
 
 function renderRules(d) {
-  const card = $("#rules-card");
-  card.hidden = !d.unmatched.length && !d.unsure.length;
-  if (card.hidden) return;
+  fillRuleFormCategories();
   const parts = [];
   if (d.unmatched.length) {
-    parts.push(el("p", "sub", "Not categorised yet: add under \"apps\" or \"sites\""));
-    parts.push(table([{ label: "Name" }, { label: "Type" }, { label: "Time", num: true }],
-      d.unmatched.map((u) => [u.name, u.kind, fmtDur(u.seconds)])));
+    parts.push(el("h3", "mini", "No rule yet"));
+    parts.push(table([{ label: "Name", cls: "title" }, { label: "Type" }, { label: "Time", num: true }, { label: "Set category" }],
+      d.unmatched.map((u) => {
+        const section = u.kind === "site" ? "sites" : "apps";
+        const sel = catSelect("", { content: section === "sites", label: `Category for ${u.name}` });
+        sel.addEventListener("change", () => saveRules([{ section, key: u.name, category: sel.value }], sel));
+        return [u.name, u.kind, fmtDur(u.seconds), sel];
+      })));
   }
   if (d.unsure.length) {
-    parts.push(el("p", "sub", "Unsure: add a channel rule or keywords"));
-    parts.push(table([{ label: "Site" }, { label: "Title", cls: "title" }, { label: "Time", num: true }],
-      d.unsure.map((u) => [u.site, u.title, fmtDur(u.seconds)])));
+    parts.push(el("h3", "mini", "Unsure pages and videos"));
+    parts.push(table([{ label: "Site" }, { label: "Title", cls: "title" }, { label: "Time", num: true }, { label: "Set category" }],
+      d.unsure.map((u) => {
+        const box = el("div");
+        const sel = catSelect("", { label: `Category for ${u.title}` });
+        let scope = null;
+        if (u.channel) {  // a channel rule fixes every video from it, past and future
+          scope = el("select", "catsel");
+          scope.setAttribute("aria-label", "Applies to");
+          scope.append(new Option(`All from ${u.channel}`, "channel"), new Option("Just this one", "page"));
+        }
+        sel.addEventListener("change", () => {
+          const changes = scope?.value === "channel"
+            ? [{ section: "channels", key: u.channel, category: sel.value }]
+            : u.urls.map((url) => ({ section: "pages", key: url, category: sel.value }));
+          saveRules(changes, sel);
+        });
+        box.append(sel);
+        if (scope) { box.append(document.createTextNode(" ")); box.append(scope); }
+        else box.append(el("div", "scope", "this page"));
+        return [u.site, u.title, fmtDur(u.seconds), box];
+      })));
   }
+  if (!parts.length) parts.push(empty("Everything in this range has a category. Use the pickers in \"Top apps and sites\" or \"Pages read\" to change one."));
   $("#rules").replaceChildren(...parts);
 }
 
@@ -544,6 +674,7 @@ async function loadHealth() {
     $("#health").replaceChildren(pill("bad", "Tracker", " not reachable"));
     return;
   }
+  state.health = h;
   const now = h.now;
   const pills = [];
 
@@ -871,6 +1002,9 @@ async function loadEmail() {
     f.to.value = s.to && s.to !== s.address ? s.to : "";
     f.daily_enabled.checked = !!s.daily_enabled;
     f.daily_time.value = s.daily_time || "21:00";
+    f.periodic_enabled.checked = !!s.periodic_enabled;
+    f.periodic_days.value = s.periodic_days || 3;
+    f.periodic_time.value = s.periodic_time || "21:00";
     f.weekly_enabled.checked = !!s.weekly_enabled;
     f.password.placeholder = s.has_password ? "saved · type a new one to replace it" : "16 letters from Google";
     $("#email-sub").textContent = s.configured
@@ -887,6 +1021,8 @@ $("#email-form").addEventListener("submit", async (ev) => {
     await post("/api/email/settings", {
       address: f.address.value.trim(), to: f.to.value.trim(), password: f.password.value,
       daily_enabled: f.daily_enabled.checked, daily_time: f.daily_time.value || "21:00",
+      periodic_enabled: f.periodic_enabled.checked, periodic_days: Number(f.periodic_days.value || 3),
+      periodic_time: f.periodic_time.value || "21:00",
       weekly_enabled: f.weekly_enabled.checked,
     });
     f.password.value = "";
@@ -951,10 +1087,11 @@ async function load() {
     loadHealth();
     updateExports(start, end);
     loadTrends(end);
+    loadFocus();
     fillCategorySelect();
     $("#error").hidden = true;
     $("#updated").textContent = `Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
-    if (data.range.includes_today) state.timer = setTimeout(load, REFRESH_MS);
+    if (data.range.includes_today) state.timer = setTimeout(autoLoad, REFRESH_MS);
   } catch (err) {
     const msg = err instanceof TypeError
       ? "Can't reach the desktop tracker. Is it running? (pythonw desktop\\tracker.py)"
@@ -962,10 +1099,16 @@ async function load() {
     $("#error").textContent = msg;
     $("#error").hidden = false;
     loadHealth();
-    state.timer = setTimeout(load, REFRESH_MS);
+    state.timer = setTimeout(autoLoad, REFRESH_MS);
   } finally {
     document.body.classList.remove("loading");
   }
+}
+
+// The periodic refresh re-draws tables; don't do it under you while you're picking a category.
+function autoLoad() {
+  if (document.activeElement?.matches?.("select.catsel")) { state.timer = setTimeout(autoLoad, 5000); return; }
+  load();
 }
 
 function syncControls() {
@@ -1004,6 +1147,209 @@ $("#theme").addEventListener("click", () => {
   try { localStorage.setItem("got-theme", theme); } catch { /* ignore */ }
 });
 
+// ------------------------------------------------------------------ search what you've read
+
+function highlighted(text) {
+  // Snippets mark matches with \u0002 … \u0003; build <mark> nodes (never HTML from data).
+  const frag = document.createDocumentFragment();
+  String(text || "").split("\u0002").forEach((chunk, i) => {
+    if (i === 0) { frag.append(chunk.replace(/\u0003/g, "")); return; }
+    const [hit, ...rest] = chunk.split("\u0003");
+    frag.append(el("mark", null, hit), rest.join(""));
+  });
+  return frag;
+}
+
+function fmtAgoTs(ts) {
+  if (!ts) return "";
+  const days = Math.floor((Date.now() / 1000 - ts) / 86400);
+  if (days < 1) return `today ${fmtClock(ts)}`;
+  if (days < 2) return "yesterday";
+  if (days < 30) return `${days} days ago`;
+  return new Date(ts * 1000).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+}
+
+async function runFind(q, meaning) {
+  const out = $("#find-results");
+  if (!q.trim()) { out.replaceChildren(); say("#find-msg", ""); return; }
+  say("#find-msg", "Searching…");
+  let r;
+  try {
+    const res = await fetch(`/api/find?q=${encodeURIComponent(q)}&meaning=${meaning ? 1 : 0}`, { cache: "no-store" });
+    r = await res.json();
+    if (!res.ok) throw new Error(r.error || `HTTP ${res.status}`);
+  } catch (err) {
+    say("#find-msg", `Search failed: ${err.message}`, true);
+    return;
+  }
+  const n = r.pages.length;
+  say("#find-msg", (n ? `${n} page${n > 1 ? "s" : ""}` : "No pages") +
+    (r.searches.length ? ` · ${r.searches.length} past search${r.searches.length > 1 ? "es" : ""}` : "") +
+    (r.note ? ` · ${r.note}` : ""));
+  const parts = [];
+  if (n) {
+    const list = el("ul", "results");
+    r.pages.forEach((p) => {
+      const li = el("li");
+      const a = el("a", "t", p.title || p.url);
+      a.href = p.url; a.target = "_blank"; a.rel = "noreferrer noopener";
+      const meta = el("div", "meta");
+      const bits = [p.domain, p.author, fmtAgoTs(p.last_seen), p.seconds ? `${fmtDur(p.seconds)} spent` : "",
+        p.scroll != null ? `read ${Math.round(p.scroll)}%` : ""].filter(Boolean);
+      meta.append(bits.join(" · "));
+      p.match.forEach((m) => meta.append(el("span", "badge", m === "words" ? "words match" : "similar meaning")));
+      li.append(a, meta);
+      if (p.snippet) { const s = el("div", "snip"); s.append(highlighted(p.snippet)); li.append(s); }
+      list.append(li);
+    });
+    parts.push(list);
+  }
+  if (r.searches.length) {
+    parts.push(el("h3", "mini", "Your past searches"));
+    parts.push(table([{ label: "When" }, { label: "Where" }, { label: "Search", cls: "title" }],
+      r.searches.map((s) => [fmtWhen(s.ts, true), s.engine, s.query])));
+  }
+  out.replaceChildren(...parts);
+}
+
+$("#find-form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const f = ev.target.elements;
+  runFind(f.q.value, f.meaning.checked);
+});
+
+// ------------------------------------------------------------------ focus mode
+
+const focusState = { data: null, timer: null };
+
+function fmtLeft(s) {
+  s = Math.max(0, Math.round(s));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+}
+
+function resultCell(s) {
+  const kinds = { completed: ["good", "✓", "Finished"], stopped: ["warn", "!", "Ended early"], running: ["run", "●", "Running"] };
+  const [cls, ico, label] = kinds[s.result] || kinds.running;
+  const span = el("span", `result ${cls}`);
+  span.append(el("span", "ico", ico), document.createTextNode(label));
+  return span;
+}
+
+function renderFocus() {
+  const f = focusState.data;
+  if (!f) return;
+  const cur = f.current;
+  clearInterval(focusState.timer);
+  $("#focus-form").hidden = !!cur;
+  $("#focus-sub").textContent = `${f.settings.block.length} sites blocked during focus`;
+
+  if (cur) {
+    const live = el("div", "focus-live");
+    const left = el("div", "left");
+    const what = el("div", "what");
+    const running = (f.history.sessions || []).find((s) => s.id === cur.id);
+    what.append(el("b", null, cur.label || "Focus session"), el("br"),
+      `Until ${fmtClock(cur.end)}` + (running?.blocked ? ` · ${running.blocked} blocked site visit${running.blocked > 1 ? "s" : ""} so far` : ""));
+    const stop = el("button", "ghost", "End early");
+    stop.type = "button";
+    let armed = false;
+    stop.addEventListener("click", async () => {
+      if (!armed) { armed = true; stop.textContent = "Sure? Click again"; setTimeout(() => { armed = false; stop.textContent = "End early"; }, 5000); return; }
+      try { await post("/api/focus/stop"); say("#focus-msg", "Ended. Brave unblocks within 30 seconds."); }
+      catch (err) { say("#focus-msg", err.message, true); }
+      loadFocus();
+    });
+    live.append(left, what, stop);
+    $("#focus-now").replaceChildren(live);
+    const tick = () => {
+      const s = cur.end - Date.now() / 1000;
+      if (s <= 0) { clearInterval(focusState.timer); loadFocus(); return; }
+      left.textContent = fmtLeft(s);
+    };
+    tick();
+    focusState.timer = setInterval(tick, 1000);
+  } else {
+    $("#focus-now").replaceChildren();
+    const mins = $("#focus-form").elements.minutes;
+    if (!mins.value) mins.value = f.settings.minutes;
+  }
+
+  const h = f.history;
+  const done = h.completed + h.stopped;
+  if (h.sessions.length) {
+    const stat = (label, value) => { const s = el("div", "stat"); s.append(el("div", "label", label), el("div", "value", value)); return s; };
+    const row = el("div", "statrow");
+    row.append(
+      stat("Finished (14 days)", `${h.completed} of ${done}`),
+      stat("Focused time", fmtDur(h.focused_seconds)),
+      stat("On task during focus", h.focused_seconds ? `${pct(h.productive_seconds, h.focused_seconds)}%` : "–"),
+      stat("Blocked site visits", String(h.blocked)),
+    );
+    $("#focus-stats").replaceChildren(row);
+    $("#focus-history").replaceChildren(table(
+      [{ label: "When" }, { label: "Working on", cls: "title" }, { label: "Planned", num: true }, { label: "Lasted", num: true },
+        { label: "Result" }, { label: "On task", num: true }, { label: "Blocked" }],
+      h.sessions.slice(0, 15).map((s) => [
+        fmtWhen(s.start, true), s.label || "–", fmtDur(s.planned_seconds), fmtDur(s.seconds), resultCell(s),
+        s.active_seconds ? `${pct(s.productive_seconds, s.seconds)}%` : "–",
+        s.blocked ? s.blocked_sites.map((b) => `${b.domain} ×${b.count}`).join(", ") : "–",
+      ])));
+  } else {
+    $("#focus-stats").replaceChildren();
+    $("#focus-history").replaceChildren(empty("No focus sessions yet. Start one above or from the extension's popup."));
+  }
+  const ta = $("#focus-sites-form").elements.block;
+  if (document.activeElement !== ta && !ta.dataset.dirty) ta.value = f.settings.block.join("\n");
+}
+
+async function loadFocus() {
+  try {
+    const res = await fetch("/api/focus", { cache: "no-store" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    focusState.data = data;
+    renderFocus();
+  } catch { /* main banner covers a dead tracker */ }
+}
+
+async function startFocus(minutes) {
+  const f = $("#focus-form").elements;
+  try {
+    await post("/api/focus/start", { minutes: Number(minutes), label: f.label.value.trim() });
+    f.label.value = "";
+    const ext = state.health?.extension;
+    const old = ext?.version && ext.version.localeCompare("0.6.0", undefined, { numeric: true }) < 0;
+    say("#focus-msg", old
+      ? "Started, but the extension is too old to block sites: reload it in brave://extensions."
+      : "Started. Brave starts blocking within 30 seconds (instantly if you start from the extension).", old);
+  } catch (err) {
+    say("#focus-msg", `Couldn't start: ${err.message}`, true);
+  }
+  loadFocus();
+}
+
+document.querySelectorAll("#focus-form [data-min]").forEach((b) =>
+  b.addEventListener("click", () => startFocus(b.dataset.min)));
+$("#focus-form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  startFocus(ev.target.elements.minutes.value || 50);
+});
+$("#focus-sites-form").elements.block.addEventListener("input", (e) => { e.target.dataset.dirty = "1"; });
+$("#focus-sites-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const ta = ev.target.elements.block;
+  try {
+    const r = await post("/api/focus/settings", { block: ta.value });
+    delete ta.dataset.dirty;
+    ta.value = r.settings.block.join("\n");
+    say("#focus-msg", `Saved ${r.settings.block.length} sites.`);
+    loadFocus();
+  } catch (err) {
+    say("#focus-msg", `Couldn't save: ${err.message}`, true);
+  }
+});
+
 $("#offline-form").elements.date.value = isoDay(new Date());
 $("#offline-form").elements.date.max = isoDay(new Date());
 
@@ -1011,3 +1357,5 @@ syncControls();
 load();
 loadOffline();
 loadEmail();
+loadRecentRules();
+loadFocus();

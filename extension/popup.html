@@ -12,6 +12,13 @@
     button { width: 100%; padding: 7px; font: inherit; cursor: pointer; margin-top: 6px; }
     label { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
     a { font-size: 12px; display: block; margin-top: 10px; }
+    .focus { border-top: 1px solid rgba(128,128,128,.35); margin-top: 12px; padding-top: 10px; }
+    .focus h2 { font-size: 13px; margin: 0 0 4px; }
+    .row { display: flex; gap: 6px; }
+    .row button { margin-top: 4px; }
+    #focusLeft { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    #focusMsg { font-size: 12px; min-height: 1em; }
+    [hidden] { display: none !important; }
   </style>
 </head>
 <body>
@@ -19,6 +26,23 @@
   <div class="state" id="state"></div>
   <button id="toggleBlock" hidden></button>
   <label><input id="paused" type="checkbox"> Pause all tracking</label>
+  <div class="focus">
+    <h2>Focus mode</h2>
+    <div id="focusOff">
+      <div>Blocks distracting sites for:</div>
+      <div class="row">
+        <button type="button" data-min="25">25m</button>
+        <button type="button" data-min="50">50m</button>
+        <button type="button" data-min="90">90m</button>
+      </div>
+    </div>
+    <div id="focusOn" hidden>
+      <div><span id="focusLeft">--:--</span> left</div>
+      <div id="focusLabel"></div>
+      <button type="button" id="focusStop">End early</button>
+    </div>
+    <div id="focusMsg" class="bad" role="status"></div>
+  </div>
   <button id="openDashboard">Open dashboard</button>
   <a href="#" id="openOptions">Settings</a>
   <script src="blocklist.js"></script>

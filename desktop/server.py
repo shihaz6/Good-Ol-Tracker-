@@ -21,6 +21,10 @@ Endpoints:
   GET  /api/export?kind=activity|daily|searches&start=&end=  -> CSV download
   GET  /api/email                      -> email settings (never the password)
   POST /api/email/settings {...,password?} / POST /api/email/test
+  POST /api/rules {changes:[{section,key,category}]} / POST /api/rules/undo / GET /api/rules/recent
+  GET  /api/find?q=&meaning=1          -> search pages you've read + past searches
+  GET  /api/focus / POST /api/focus/start {minutes,label} / /api/focus/stop / /api/focus/settings
+  POST /focus {action:start|stop, minutes, label}  (extension popup; needs token)
        Same-origin only: other websites can't read it (no CORS, Sec-Fetch-Site and
        Origin checks, Host check against DNS rebinding).
 """
@@ -42,8 +46,11 @@ import analytics
 import backup
 import categorize
 import db
+import find
+import focus
 import keys
 import mailer
+import rules_edit
 import weekly
 
 PORT = 47321
@@ -192,6 +199,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/manual": lambda: self._manual_list(parse_qs(query)),
             "/api/export": lambda: self._export(parse_qs(query)),
             "/api/email": lambda: self._json(200, mailer.status()),
+            "/api/rules/recent": lambda: self._json(200, {"recent": rules_edit.recent()}),
+            "/api/find": lambda: self._find(parse_qs(query)),
+            "/api/focus": self._focus_status,
         }
         if path in routes:
             if not self._dashboard_ok(api=True):
@@ -217,7 +227,7 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
-        if length > 20_000:
+        if length > 100_000:
             raise ValueError("request too large")
         data = json.loads(self.rfile.read(length) or b"{}") if length else {}
         if not isinstance(data, dict):
@@ -327,6 +337,58 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
         return self._json(200, {"ok": True, "to": to})
 
+    # --- rules / search / focus ----------------------------------------------------
+
+    def _rules_set(self, body):
+        return self._json(200, rules_edit.set_rules(body.get("changes")))
+
+    def _rules_undo(self, _body):
+        return self._json(200, rules_edit.undo())
+
+    def _find(self, params):
+        q = params.get("q", [""])[0]
+        meaning = params.get("meaning", ["1"])[0] != "0"
+        conn = db.connect()
+        try:
+            return self._json(200, find.search(conn, q, meaning))
+        finally:
+            conn.close()
+
+    def _focus_status(self):
+        conn = db.connect()
+        try:
+            now = time.time()
+            data = {"now": now, "current": focus.current(conn, now), "settings": focus.settings(),
+                    "history": focus.history(conn, now - 14 * 86400, now + 1, now=now)}
+        except ValueError as exc:
+            return self._send(500, {"error": f"categories.json: {exc}"})
+        finally:
+            conn.close()
+        return self._json(200, data)
+
+    @staticmethod
+    def _focus_do(body) -> dict:
+        """Shared by the dashboard (POST /api/focus/start|stop) and the extension (POST /focus)."""
+        action = body.get("action")
+        conn = db.connect()
+        try:
+            if action == "status":
+                return {"ok": True, "focus": focus.current(conn)}
+            if action == "start":
+                cur = focus.start(conn, body.get("minutes"), body.get("label", ""))
+                log.info("focus session started: %s min", round((cur["end"] - cur["start"]) / 60))
+                return {"ok": True, "focus": cur}
+            if action == "stop":
+                result = focus.stop(conn)
+                log.info("focus session ended: %s", result)
+                return {"ok": True, "result": result, "focus": None}
+            raise ValueError("action must be start, stop or status")
+        finally:
+            conn.close()
+
+    def _focus_settings(self, body):
+        return self._json(200, {"ok": True, "settings": focus.save_settings(body)})
+
     def _ai_status(self):
         conn = db.connect()
         try:
@@ -418,6 +480,11 @@ class Handler(BaseHTTPRequestHandler):
             "/api/manual/delete": self._manual_delete,
             "/api/email/settings": self._email_settings,
             "/api/email/test": self._email_test,
+            "/api/rules": self._rules_set,
+            "/api/rules/undo": self._rules_undo,
+            "/api/focus/start": lambda b: self._json(200, self._focus_do({**b, "action": "start"})),
+            "/api/focus/stop": lambda b: self._json(200, self._focus_do({"action": "stop"})),
+            "/api/focus/settings": self._focus_settings,
         }
         if self.path in posts:
             if not self._strict_same_origin():
@@ -426,6 +493,13 @@ class Handler(BaseHTTPRequestHandler):
                 return posts[self.path](self._read_json())
             except mailer.MailError as exc:
                 return self._send(400, {"error": str(exc)})
+            except (ValueError, TypeError, KeyError) as exc:
+                return self._send(400, {"error": str(exc) or "bad request"})
+        if self.path == "/focus":  # extension popup / blocked page
+            if not self._authorized():
+                return self._send(401, {"error": "unauthorized"})
+            try:
+                return self._send(200, self._focus_do(self._read_json()))
             except (ValueError, TypeError, KeyError) as exc:
                 return self._send(400, {"error": str(exc) or "bad request"})
         if self.path != "/ingest":
@@ -453,14 +527,17 @@ def ingest(payload: dict, state: SharedState) -> dict:
     visits = payload.get("visits") or []
     pages = payload.get("pages") or []
     searches = payload.get("searches") or []
-    if not all(isinstance(x, list) for x in (visits, pages, searches)):
-        raise ValueError("visits/pages/searches must be lists")
+    blocks = payload.get("focus_blocks") or []
+    if not all(isinstance(x, list) for x in (visits, pages, searches, blocks)):
+        raise ValueError("visits/pages/searches/focus_blocks must be lists")
     client = payload.get("client")
     conn = db.connect()
     try:
         n_visits = db.insert_browser_visits(conn, visits)
         n_pages = db.upsert_pages(conn, pages)
         n_searches = db.insert_searches(conn, searches)
+        focus.record_blocks(conn, blocks)
+        current_focus = focus.current(conn)  # the reply tells the extension what to block
         # Health check: remember when the extension last checked in and its settings.
         db.set_meta(conn, "extension_last_seen", time.time())
         if isinstance(client, dict):
@@ -470,7 +547,7 @@ def ingest(payload: dict, state: SharedState) -> dict:
         conn.close()
     if "media" in payload:
         state.media_heartbeat(bool(payload["media"]))
-    return {"visits": n_visits, "pages": n_pages, "searches": n_searches}
+    return {"visits": n_visits, "pages": n_pages, "searches": n_searches, "focus": current_focus}
 
 
 def start(token: str, state: SharedState) -> ThreadingHTTPServer:

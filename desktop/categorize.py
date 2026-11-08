@@ -50,12 +50,13 @@ class Rules:
         self.apps = {k.lower(): v for k, v in raw.get("apps", {}).items()}
         self.sites = {k.lower(): v for k, v in raw.get("sites", {}).items()}
         self.channels = {k.lower(): v for k, v in raw.get("channels", {}).items()}
+        self.pages = dict(raw.get("pages", {}))  # exact page URL -> category (set from the dashboard)
         self.descriptions = {k: [str(t) for t in v] for k, v in raw.get("descriptions", {}).items() if v}
         self.keywords = {
             cat: re.compile(r"(?<!\w)(?:" + "|".join(re.escape(w) for w in words) + r")(?!\w)", re.I)
             for cat, words in raw.get("keywords", {}).items() if words
         }
-        used = [*self.apps.values(), *self.sites.values(), *self.channels.values(),
+        used = [*self.apps.values(), *self.sites.values(), *self.channels.values(), *self.pages.values(),
                 *self.keywords, *self.fallback.values(), *self.productive, *self.descriptions]
         unknown = sorted({c for c in used if c not in self.categories and c != CONTENT})
         if unknown:
@@ -101,8 +102,10 @@ class Rules:
             fields.append((title, 3))  # no scan (yet): judge by the tab title
         return fields
 
-    def classify_browser(self, domain: str, title: str, page: dict | None):
-        """Order: site rule > channel rule > keywords > AI (embeddings) > fallback."""
+    def classify_browser(self, domain: str, title: str, page: dict | None, url: str | None = None):
+        """Order: page rule > site rule > channel rule > keywords > AI (embeddings) > fallback."""
+        if url and self.pages.get(url) in self.categories:
+            return self.pages[url], True
         rule = self.site_rule(domain)
         ai = (page or {}).get("ai_category")
         if ai not in self.categories:
@@ -184,7 +187,7 @@ def _categorise_pc(conn, start: float, end: float, rules: Rules) -> list[Item]:
 
     visits = []
     for s, e, domain, title, url in browser_rows:
-        cat, matched = rules.classify_browser(domain, title, pages.get(url))
+        cat, matched = rules.classify_browser(domain, title, pages.get(url), url)
         visits.append(Item(s, e, cat, domain, title, "browser", matched, url))
 
     items, i = [], 0
