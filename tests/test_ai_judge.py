@@ -38,7 +38,7 @@ class SiteListsTest(unittest.TestCase):
         for host in ("web.whatsapp.com", "www.sampath.lk", "combank.lk", "online.peoples-bank.lk",
                      "vault.bitwarden.com", "passwords.google.com"):
             self.assertTrue(sitelists.never_send(host), host)
-        for host in ("claude.ai", "youtube.com", "porsche.com"):
+        for host in ("claude.ai", "youtube.com", "shoeshop-example.com"):
             self.assertFalse(sitelists.never_send(host), host)
 
     def test_apps(self):
@@ -107,7 +107,7 @@ class JudgeRunTest(unittest.TestCase):
             (at(9), at(9, 20), "claude.ai", "Brain tumor causes - Claude", "https://claude.ai/chat/1"),
             (at(9, 20), at(9, 30), "claude.ai", "Weekend plans - Claude", "https://claude.ai/chat/2"),
             (at(9, 30), at(9, 40), "youtube.com", "Java full course", "https://www.youtube.com/watch?v=j"),
-            (at(9, 40), at(9, 50), "porsche.com", "Porsche Sri Lanka", "https://www.porsche.com/sl"),
+            (at(9, 40), at(9, 50), "shoeshop-example.com", "Shoeshop-example Sri Lanka", "https://www.shoeshop-example.com/sl"),
             (at(9, 50), at(10), "combank.lk", "Online banking", "https://combank.lk/login"),
             (at(10), at(10, 5), "pornhub.com", "x", "https://pornhub.com/"),
         ]
@@ -124,7 +124,7 @@ class JudgeRunTest(unittest.TestCase):
                   ("https://claude.ai/chat/1", "Brain tumor causes", "What causes brain tumours? Genetic factors " * 40, at(9)))
         c.commit()
         self.groq = FakeGroq({"brain": ("Study", 0.9), "weekend": ("Browsing", 0.4),
-                              "porsche": ("Browsing", 0.85), "photos": ("Other", 0.8)})
+                              "shoeshop-example": ("Browsing", 0.85), "photos": ("Other", 0.8)})
 
     def tearDown(self):
         keys.load_key = self._key
@@ -138,7 +138,7 @@ class JudgeRunTest(unittest.TestCase):
     def test_only_unsure_pages_and_unruled_names_are_sent(self):
         r = self.run_judge()
         self.assertEqual(r["pages"], 2)   # the two claude.ai chats; YouTube was decided by keywords
-        self.assertEqual(r["names"], 2)   # porsche.com + Photos.exe
+        self.assertEqual(r["names"], 2)   # shoeshop-example.com + Photos.exe
         sent = self.sent()
         for private in ("combank", "online banking", "bitwarden", "my vault", "pornhub"):
             self.assertNotIn(private, sent)
@@ -167,16 +167,16 @@ class JudgeRunTest(unittest.TestCase):
     def test_suggestions_and_dismiss(self):
         self.run_judge()
         s = ai_judge.suggestions(self.conn, self.rules)
-        self.assertEqual(s[("site", "porsche.com")]["category"], "Browsing")
+        self.assertEqual(s[("site", "shoeshop-example.com")]["category"], "Browsing")
         self.assertEqual(s[("app", "photos.exe")]["category"], "Other")
         summary = analytics.summary(self.conn, DAY, DAY, self.rules)
         um = {u["name"]: u for u in summary["unmatched"]}
-        self.assertEqual(um["porsche.com"]["suggestion"]["category"], "Browsing")
+        self.assertEqual(um["shoeshop-example.com"]["suggestion"]["category"], "Browsing")
         page = next(p for p in summary["pages"] if p["url"] == "https://claude.ai/chat/1")
         self.assertEqual(page["category"], "Study")
         self.assertEqual(page["ai"]["reason"], "because Study")
-        ai_judge.dismiss(self.conn, "site", "porsche.com")
-        self.assertNotIn(("site", "porsche.com"), ai_judge.suggestions(self.conn, self.rules))
+        ai_judge.dismiss(self.conn, "site", "shoeshop-example.com")
+        self.assertNotIn(("site", "shoeshop-example.com"), ai_judge.suggestions(self.conn, self.rules))
         self.assertEqual(self.run_judge()["names"], 0)  # not asked again
         with self.assertRaises(ValueError):
             ai_judge.dismiss(self.conn, "site", "never-suggested.com")

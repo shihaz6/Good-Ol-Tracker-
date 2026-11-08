@@ -23,6 +23,8 @@ Endpoints:
   POST /api/email/settings {...,password?} / POST /api/email/test
   POST /api/rules {changes:[{section,key,category}]} / POST /api/rules/undo / GET /api/rules/recent
   POST /api/ai/dismiss {kind, name}   reject a Groq site/app suggestion
+  GET /api/nudge · POST /api/nudge/settings · POST /api/nudge/snooze   distraction alerts
+  POST /nudge {action: snooze}         (token) the extension's Snooze button
   GET  /api/find?q=&meaning=1          -> search pages you've read + past searches
   GET  /api/focus / POST /api/focus/start {minutes,label} / /api/focus/stop / /api/focus/settings
   POST /focus {action:start|stop, minutes, label}  (extension popup; needs token)
@@ -52,6 +54,7 @@ import find
 import focus
 import keys
 import mailer
+import nudge
 import rules_edit
 import weekly
 
@@ -204,6 +207,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/rules/recent": lambda: self._json(200, {"recent": rules_edit.recent()}),
             "/api/find": lambda: self._find(parse_qs(query)),
             "/api/focus": self._focus_status,
+            "/api/nudge": lambda: self._json(200, nudge.status()),
         }
         if path in routes:
             if not self._dashboard_ok(api=True):
@@ -494,6 +498,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/rules": self._rules_set,
             "/api/rules/undo": self._rules_undo,
             "/api/ai/dismiss": self._ai_dismiss,
+            "/api/nudge/settings": lambda b: self._json(200, {"ok": True, "settings": nudge.save_settings(b)}),
+            "/api/nudge/snooze": lambda b: self._json(200, {"ok": True, "snoozed_until": nudge.snooze(b.get("minutes"))}),
             "/api/focus/start": lambda b: self._json(200, self._focus_do({**b, "action": "start"})),
             "/api/focus/stop": lambda b: self._json(200, self._focus_do({"action": "stop"})),
             "/api/focus/settings": self._focus_settings,
@@ -513,6 +519,16 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 return self._send(200, self._focus_do(self._read_json()))
             except (ValueError, TypeError, KeyError) as exc:
+                return self._send(400, {"error": str(exc) or "bad request"})
+        if self.path == "/nudge":  # extension: "Snooze" on a distraction alert
+            if not self._authorized():
+                return self._send(401, {"error": "unauthorized"})
+            try:
+                body = self._read_json()
+                if body.get("action") != "snooze":
+                    raise ValueError("action must be snooze")
+                return self._send(200, {"ok": True, "snoozed_until": nudge.snooze(body.get("minutes"))})
+            except (ValueError, TypeError) as exc:
                 return self._send(400, {"error": str(exc) or "bad request"})
         if self.path != "/ingest":
             return self._send(404, {"error": "not found"})
@@ -560,7 +576,8 @@ def ingest(payload: dict, state: SharedState) -> dict:
     if "media" in payload:
         state.media_heartbeat(bool(payload["media"]))
     return {"visits": n_visits, "pages": n_pages, "searches": n_searches, "focus": current_focus,
-            "adult": focus.settings()["adult"]}  # adult filter: focus | always | off
+            "adult": focus.settings()["adult"],  # adult filter: focus | always | off
+            "nudge": nudge.take()}               # distraction alert to show, or None
 
 
 def start(token: str, state: SharedState) -> ThreadingHTTPServer:

@@ -177,6 +177,20 @@ page in Brave showing the time left, with *Back to work* and a two-click *End ea
 - Needs extension **v0.6.0**: reload it in `brave://extensions` (it asks for the new
   "block content" and notifications permissions).
 
+### Distraction alerts
+
+After 20 minutes in a row of Entertainment or Social (settings under *Distraction alerts*
+on the Focus mode card), you get a notification: "25 min on youtube.com and instagram.com"
+with **Start 25-min focus** and **Snooze 30 min** buttons. It repeats every 20 minutes while
+it carries on.
+
+- Detours under 1½ minutes and pauses under 3 minutes don't reset the count; 1½ minutes of
+  anything else does.
+- No alerts during a focus session or while snoozed (*Snooze now* on the dashboard too).
+- Checked every 30 s by the desktop app (`desktop/nudge.py`), shown by the extension
+  (needs **v0.6.3**). If Brave isn't open (a game, Spotify), a plain Windows notification
+  without buttons appears instead.
+
 ## Email reports (Gmail)
 
 Set up on the dashboard's **Email reports** card: your Gmail address, where to send,

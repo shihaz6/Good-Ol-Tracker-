@@ -67,6 +67,24 @@
             <option value="off">Not blocked</option>
           </select>
         </label>
+        <details id="nudge-box">
+          <summary>Distraction alerts <span class="muted" id="nudge-summary"></span></summary>
+          <p class="sub">A notification after a long unbroken stretch of distracting time, with a button to
+            start a 25-minute focus session. Quick detours (under 1½ min) don't reset the count.
+            Nothing fires during a focus session.</p>
+          <form id="nudge-form" class="nudge-form">
+            <label class="check"><input type="checkbox" name="enabled"> Alert me after
+              <input type="number" name="minutes" min="5" max="240" class="num" aria-label="Minutes before an alert"> min of</label>
+            <div class="nudge-cats" id="nudge-cats" role="group" aria-label="Categories that count"></div>
+            <label class="inline">Remind again every <input type="number" name="repeat" min="5" max="240" class="num"> min while it goes on</label>
+            <label class="inline">Snooze lasts <input type="number" name="snooze" min="5" max="240" class="num"> min</label>
+            <div class="buttons">
+              <button type="submit" class="ghost">Save</button>
+              <button type="button" class="linkbtn" id="nudge-snooze">Snooze now</button>
+            </div>
+          </form>
+          <p class="formmsg" id="nudge-msg" role="status"></p>
+        </details>
         <div id="focus-stats"></div>
         <div id="focus-history"></div>
         <details id="focus-sites">

@@ -82,7 +82,8 @@
     "consent.exe": "Other",
     "LockApp.exe": "Other",
     "StartMenuExperienceHost.exe": "Other",
-    "Notepad.exe": "Other"
+    "Notepad.exe": "Other",
+    "SnippingTool.exe": "Other"
   },
 
   "sites": {
@@ -165,7 +166,8 @@
     "duckduckgo.com": "content",
     "claude.ai": "content",
     "chatgpt.com": "content",
-    "gemini.google.com": "content"
+    "gemini.google.com": "content",
+    "porsche.com": "Other"
   },
 
   "channels": {

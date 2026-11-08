@@ -1412,6 +1412,59 @@ $("#focus-sites-form").addEventListener("submit", async (ev) => {
   }
 });
 
+// ------------------------------------------------------------------ distraction alerts
+
+async function loadNudge() {
+  try {
+    const res = await fetch("/api/nudge", { cache: "no-store" });
+    const n = await res.json();
+    if (!res.ok) throw new Error(n.error);
+    const s = n.settings;
+    const f = $("#nudge-form").elements;
+    const box = $("#nudge-form");
+    if (!box.contains(document.activeElement)) {
+      f.enabled.checked = s.enabled;
+      f.minutes.value = s.minutes;
+      f.repeat.value = s.repeat;
+      f.snooze.value = s.snooze;
+      const cats = (state.data?.categories || s.categories).filter((c) => c !== "Unsure");
+      $("#nudge-cats").replaceChildren(...cats.map((c) => {
+        const l = el("label", "check");
+        const cb = el("input");
+        cb.type = "checkbox";
+        cb.name = "cat";
+        cb.value = c;
+        cb.checked = s.categories.includes(c);
+        l.append(cb, swatch(c), document.createTextNode(c));
+        return l;
+      }));
+    }
+    let sum = s.enabled ? `· after ${s.minutes} min of ${s.categories.join(" / ")}` : "· off";
+    if (n.snoozed_until && n.snoozed_until * 1000 > Date.now()) sum += ` · snoozed until ${fmtClock(n.snoozed_until)}`;
+    $("#nudge-summary").textContent = sum;
+  } catch { /* the focus card already reports a dead server */ }
+}
+
+$("#nudge-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target.elements;
+  const categories = [...ev.target.querySelectorAll("input[name=cat]:checked")].map((c) => c.value);
+  try {
+    await post("/api/nudge/settings", { enabled: f.enabled.checked, minutes: f.minutes.value,
+      repeat: f.repeat.value, snooze: f.snooze.value, categories });
+    say("#nudge-msg", "Saved.");
+    document.activeElement?.blur();
+    loadNudge();
+  } catch (err) { say("#nudge-msg", `Couldn't save: ${err.message}`, true); }
+});
+$("#nudge-snooze").addEventListener("click", async () => {
+  try {
+    const r = await post("/api/nudge/snooze", {});
+    say("#nudge-msg", `No alerts until ${fmtClock(r.snoozed_until)}.`);
+    loadNudge();
+  } catch (err) { say("#nudge-msg", err.message, true); }
+});
+
 $("#offline-form").elements.date.value = isoDay(new Date());
 $("#offline-form").elements.date.max = isoDay(new Date());
 
@@ -1421,3 +1474,4 @@ loadOffline();
 loadEmail();
 loadRecentRules();
 loadFocus();
+loadNudge();

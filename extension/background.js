@@ -211,8 +211,48 @@ async function flush(mediaPlaying) {
     const data = await res.json().catch(() => null);
     if (data && "adult" in data) await applyAdult(data.adult);
     if (data && "focus" in data) await applyFocus(data.focus);
+    if (data?.nudge) showNudge(data.nudge);
   }
 }
+
+// ---------------------------------------------------------------- distraction alerts
+
+// The desktop app decides (nudge.py); this just shows it with two buttons.
+function showNudge(n) {
+  chrome.notifications.create(`nudge-${n.id}-${Date.now()}`, {
+    type: "basic", iconUrl: "icon128.png", priority: 1,
+    title: String(n.title || "Time for a break?"),
+    message: String(n.message || ""),
+    buttons: [
+      { title: `Start ${n.focus_minutes || 25}-min focus` },
+      { title: `Snooze ${n.snooze_minutes || 30} min` },
+    ],
+  });
+}
+
+async function nudgeSnooze() {
+  const token = await getLocal("token", "");
+  if (!token) return;
+  await fetch(`${SERVER}/nudge`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Tracker-Token": token },
+    body: JSON.stringify({ action: "snooze" }),
+    signal: AbortSignal.timeout(5000),
+  }).catch(() => {});
+}
+
+chrome.notifications.onButtonClicked.addListener((id, index) => {
+  if (!id.startsWith("nudge-")) return;
+  chrome.notifications.clear(id);
+  if (index === 0) {
+    focusRequest({ action: "start", minutes: 25, label: "Back on track" }).catch((err) =>
+      chrome.notifications.create(`nudge-err-${Date.now()}`, {
+        type: "basic", iconUrl: "icon128.png", title: "Couldn't start focus", message: err.message,
+      }));
+  } else {
+    nudgeSnooze();
+  }
+});
 
 // ---------------------------------------------------------------- focus mode
 

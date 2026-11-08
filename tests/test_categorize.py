@@ -58,7 +58,7 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(self.r.classify_browser("mail.google.com", "Inbox", None), ("Communication", True))
 
     def test_unknown_site_is_flagged(self):
-        self.assertEqual(self.r.classify_browser("porsche.com", "Porsche Sri Lanka", None), ("Browsing", False))
+        self.assertEqual(self.r.classify_browser("shoeshop-example.com", "Shoes Sri Lanka", None), ("Browsing", False))
 
     def test_youtube_study_vs_entertainment(self):
         java = {"title": "Java OOP Full Course", "author": "Some Teacher",
