@@ -21,6 +21,7 @@ import backup
 import categorize
 import db
 import keys
+import mailer
 import server
 import weekly
 import win32
@@ -137,6 +138,11 @@ def background_worker() -> None:
                 log.info("weekly summary not generated: %s", exc)
             except Exception:
                 log.exception("weekly summary failed")
+
+        try:
+            mailer.maybe_send(conn)  # daily recap at the chosen time; weekly once its summary exists
+        except Exception:
+            log.exception("email check failed")
         time.sleep(AI_EVERY)
 
 

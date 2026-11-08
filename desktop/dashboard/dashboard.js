@@ -669,6 +669,261 @@ $("#generate").addEventListener("click", async () => {
   }
 });
 
+// ------------------------------------------------------------------ trends
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs, text) {
+  const n = document.createElementNS(SVG_NS, tag);
+  Object.entries(attrs || {}).forEach(([k, v]) => n.setAttribute(k, v));
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+function niceCount(max) {
+  const step = [1, 2, 5, 10, 20, 25, 50, 100, 200].find((s) => max / s <= 4) || 500;
+  const top = Math.max(step, Math.ceil(max / step) * step);
+  const ticks = [];
+  for (let v = 0; v <= top; v += step) ticks.push(v);
+  return { top, ticks };
+}
+
+// One series, one axis. Gaps (null) break the line. Hover a day for its value.
+function lineChart(container, points, { label, fmt, axis }) {
+  const width = Math.max(240, Math.floor(container.clientWidth || 300));
+  const height = 150, pl = 44, pr = 10, pt = 10, pb = 22;
+  const vals = points.map((p) => p.value).filter((v) => v != null);
+  const { top, ticks } = axis(Math.max(0, ...vals));
+  const step = points.length > 1 ? (width - pl - pr) / (points.length - 1) : 0;
+  const x = (i) => pl + i * step;
+  const y = (v) => pt + (1 - v / top) * (height - pt - pb);
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, width, height, role: "img", "aria-label": label });
+  ticks.forEach((v) => {
+    if (v > 0) svg.append(svgEl("line", { class: "grid", x1: pl, x2: width - pr, y1: y(v), y2: y(v) }));
+    svg.append(svgEl("text", { x: pl - 6, y: y(v) + 4, "text-anchor": "end" }, fmt(v, true)));
+  });
+  svg.append(svgEl("line", { class: "base", x1: pl, x2: width - pr, y1: y(0), y2: y(0) }));
+  let d = "", pen = false;
+  points.forEach((p, i) => {
+    if (p.value == null) { pen = false; return; }
+    d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`;
+    pen = true;
+  });
+  if (d) svg.append(svgEl("path", { class: "series", d }));
+  const lastIdx = points.map((p) => p.value).findLastIndex((v) => v != null);
+  if (lastIdx >= 0) svg.append(svgEl("circle", { class: "dot", cx: x(lastIdx), cy: y(points[lastIdx].value), r: 4 }));
+  [0, Math.floor((points.length - 1) / 2), points.length - 1].forEach((i, n, arr) => {
+    if (arr.indexOf(i) !== n) return;
+    const anchor = n === 0 ? "start" : n === arr.length - 1 ? "end" : "middle";
+    svg.append(svgEl("text", { x: x(i), y: height - 4, "text-anchor": anchor },
+      parseDay(points[i].date).toLocaleDateString([], { month: "short", day: "numeric" })));
+  });
+  points.forEach((p, i) => {
+    const hit = svgEl("rect", { class: "hit", x: x(i) - Math.max(step, 8) / 2, y: pt, width: Math.max(step, 8), height: height - pt - pb });
+    setTip(hit, { title: parseDay(p.date).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }),
+      rows: [{ label, value: p.value == null ? "no data" : fmt(p.value) }] });
+    svg.append(hit);
+  });
+  const wrap = el("div", "line");
+  wrap.append(svg);
+  container.replaceChildren(wrap);
+}
+
+function deltaCell(now, prev, kind, goodUp = true) {
+  if (now == null || prev == null || (prev === 0 && now === 0)) return el("span", "delta same", "–");
+  const diff = now - prev;
+  const tiny = kind === "dur" ? Math.abs(diff) < 60 : Math.abs(diff) < (kind === "pct" ? 1 : 0.5);
+  if (tiny) return el("span", "delta same", "no change");
+  const better = (diff > 0) === goodUp;
+  const span = el("span", `delta ${better ? "good" : "bad"}`);
+  span.append(el("span", "ico", diff > 0 ? "▲" : "▼"));
+  const mag = kind === "dur" ? fmtDur(Math.abs(diff)) : kind === "pct" ? `${Math.round(Math.abs(diff))} pts` : `${Math.round(Math.abs(diff) * 10) / 10}`;
+  span.append(document.createTextNode(`${diff > 0 ? "+" : "−"}${mag} ${better ? "better" : "worse"}`));
+  return span;
+}
+
+function renderTrends(t) {
+  state.trends = t;
+  const days = t.days;
+  $("#trends-sub").textContent = `Last ${days.length} days, ending ${fmtShortDay(days[days.length - 1].date)}`;
+  const durAxis = (m) => niceAxis(m, [900, 1800, 3600, 7200, 10800, 14400, 21600, 28800]);
+  const durTick = (v) => (v === 0 ? "0" : fmtDur(v));
+  lineChart($("#trend-productive"), days.map((d) => ({ date: d.date, value: d.active ? d.productive : null })),
+    { label: "Productive", fmt: durTick, axis: durAxis });
+  lineChart($("#trend-focus"), days.map((d) => ({ date: d.date, value: d.active ? d.longest_focus : null })),
+    { label: "Longest focus", fmt: durTick, axis: (m) => niceAxis(m, [300, 600, 900, 1800, 3600, 7200]) });
+  lineChart($("#trend-switches"), days.map((d) => ({ date: d.date, value: d.switches_per_hour })),
+    { label: "Switches/hour", fmt: (v) => `${Math.round(v * 10) / 10}`, axis: niceCount });
+
+  const w = t.this_week, l = t.last_week;
+  const share = (p) => (p.active ? (100 * p.productive) / p.active : null);
+  // Comparing against an empty week (e.g. before the tracker existed) would show fake "better".
+  const noLast = !l.active;
+  const cmp = (...args) => (noLast ? el("span", "delta same", "no data last week") : deltaCell(...args));
+  const rows = [
+    ["Active time", fmtDur(w.active), noLast ? "–" : fmtDur(l.active), cmp(w.active, l.active, "dur")],
+    ["Productive time", fmtDur(w.productive), noLast ? "–" : fmtDur(l.productive), cmp(w.productive, l.productive, "dur")],
+    ["Productive share", w.active ? `${Math.round(share(w))}%` : "–", l.active ? `${Math.round(share(l))}%` : "–",
+      cmp(share(w), share(l), "pct")],
+    ["Longest focus", fmtDur(w.longest_focus), noLast ? "–" : fmtDur(l.longest_focus), cmp(w.longest_focus, l.longest_focus, "dur")],
+    ["Deep focus sessions", String(w.deep_count), noLast ? "–" : String(l.deep_count), cmp(w.deep_count, l.deep_count, "n")],
+    ["Switches per hour", w.switches_per_hour ?? "–", l.switches_per_hour ?? "–",
+      cmp(w.switches_per_hour, l.switches_per_hour, "n", false)],
+  ];
+  $("#week-compare").replaceChildren(table(
+    [{ label: "" }, { label: `${fmtShortDay(w.start)}–${fmtShortDay(w.end)}`, num: true },
+      { label: `${fmtShortDay(l.start)}–${fmtShortDay(l.end)}`, num: true }, { label: "Change" }], rows));
+  $("#trends-table").replaceChildren(table(
+    [{ label: "Day" }, { label: "Active", num: true }, { label: "Productive", num: true },
+      { label: "Longest focus", num: true }, { label: "Switches/h", num: true }],
+    days.map((d) => [d.date, fmtDur(d.active), fmtDur(d.productive), fmtDur(d.longest_focus), d.switches_per_hour ?? "–"])));
+}
+
+async function loadTrends(end) {
+  if (state.trendsEnd === end && Date.now() - (state.trendsAt || 0) < 5 * 60 * 1000) return;
+  try {
+    const res = await fetch(`/api/trends?end=${end}&days=30`, { cache: "no-store" });
+    const t = await res.json();
+    if (!res.ok) throw new Error(t.error);
+    state.trendsEnd = end;
+    state.trendsAt = Date.now();
+    renderTrends(t);
+  } catch { /* the main error banner covers a dead tracker */ }
+}
+
+let resizeTimer;
+addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (state.trends) renderTrends(state.trends); }, 200);
+});
+
+// ------------------------------------------------------------------ forms (POST helper)
+
+async function post(path, body) {
+  const res = await fetch(path, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+function say(id, text, bad = false) {
+  const m = $(id);
+  m.textContent = text;
+  m.className = bad ? "formmsg bad" : "formmsg";
+}
+
+// ------------------------------------------------------------------ offline time
+
+function fillCategorySelect() {
+  const sel = $("#offline-form").elements.category;
+  if (sel.options.length || !state.data) return;
+  state.data.categories.filter((c) => c !== "Unsure").forEach((c) => sel.append(new Option(c, c)));
+  sel.value = state.data.productive.includes("Study") ? "Study" : sel.options[0].value;
+}
+
+async function loadOffline() {
+  const today = new Date();
+  const from = new Date(today); from.setDate(from.getDate() - 30);
+  try {
+    const res = await fetch(`/api/manual?start=${isoDay(from)}&end=${isoDay(today)}`, { cache: "no-store" });
+    const { entries } = await res.json();
+    if (!entries.length) { $("#offline-list").replaceChildren(empty("Nothing logged in the last 30 days.")); return; }
+    $("#offline-list").replaceChildren(table(
+      [{ label: "When" }, { label: "Length", num: true }, { label: "Category" }, { label: "Note", cls: "title" }, { label: "" }],
+      entries.map((e) => {
+        const del = el("button", "linkbtn", "Delete");
+        del.type = "button";
+        del.addEventListener("click", async () => {
+          try { await post("/api/manual/delete", { id: e.id }); await loadOffline(); load(); }
+          catch (err) { say("#offline-msg", err.message, true); }
+        });
+        const when = `${new Date(e.start * 1000).toLocaleDateString([], { month: "short", day: "numeric" })} ${fmtClock(e.start)}–${fmtClock(e.end)}`;
+        return [when, fmtDur(e.end - e.start), catLabel(e.category), e.note, del];
+      })));
+  } catch { /* ignore */ }
+}
+
+$("#offline-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target.elements;
+  try {
+    await post("/api/manual", { date: f.date.value, start: f.start.value, end: f.end.value,
+      category: f.category.value, note: f.note.value });
+    say("#offline-msg", "Added.");
+    f.note.value = "";
+    await loadOffline();
+    state.trendsAt = 0;
+    load();
+  } catch (err) {
+    say("#offline-msg", `Couldn't add: ${err.message}`, true);
+  }
+});
+
+// ------------------------------------------------------------------ email
+
+async function loadEmail() {
+  try {
+    const res = await fetch("/api/email", { cache: "no-store" });
+    const s = await res.json();
+    const f = $("#email-form").elements;
+    f.address.value = s.address || "";
+    f.to.value = s.to && s.to !== s.address ? s.to : "";
+    f.daily_enabled.checked = !!s.daily_enabled;
+    f.daily_time.value = s.daily_time || "21:00";
+    f.weekly_enabled.checked = !!s.weekly_enabled;
+    f.password.placeholder = s.has_password ? "saved · type a new one to replace it" : "16 letters from Google";
+    $("#email-sub").textContent = s.configured
+      ? `Sending from ${s.address} to ${s.to || s.address}.`
+      : "Not set up yet: add your Gmail and an App Password.";
+    $("#email-test").disabled = !s.configured;
+  } catch { /* ignore */ }
+}
+
+$("#email-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target.elements;
+  try {
+    await post("/api/email/settings", {
+      address: f.address.value.trim(), to: f.to.value.trim(), password: f.password.value,
+      daily_enabled: f.daily_enabled.checked, daily_time: f.daily_time.value || "21:00",
+      weekly_enabled: f.weekly_enabled.checked,
+    });
+    f.password.value = "";
+    say("#email-msg", "Saved.");
+    loadEmail();
+  } catch (err) {
+    say("#email-msg", `Couldn't save: ${err.message}`, true);
+  }
+});
+
+$("#email-test").addEventListener("click", async () => {
+  const btn = $("#email-test");
+  btn.disabled = true;
+  say("#email-msg", "Sending…");
+  try {
+    const r = await post("/api/email/test");
+    say("#email-msg", `Sent to ${r.to}. Check your inbox (and spam, the first time).`);
+  } catch (err) {
+    say("#email-msg", err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ------------------------------------------------------------------ export & print
+
+function updateExports(start, end) {
+  ["activity", "daily", "searches"].forEach((k) => {
+    $(`#export-${k}`).href = `/api/export?kind=${k}&start=${start}&end=${end}`;
+  });
+}
+$("#print").addEventListener("click", () => { $("#export-menu").open = false; print(); });
+document.addEventListener("click", (e) => {
+  const menu = $("#export-menu");
+  if (menu.open && !menu.contains(e.target)) menu.open = false;
+});
+
 // ------------------------------------------------------------------ data & controls
 
 function rangeDates() {
@@ -694,6 +949,9 @@ async function load() {
     render(data);
     loadAI();
     loadHealth();
+    updateExports(start, end);
+    loadTrends(end);
+    fillCategorySelect();
     $("#error").hidden = true;
     $("#updated").textContent = `Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
     if (data.range.includes_today) state.timer = setTimeout(load, REFRESH_MS);
@@ -746,5 +1004,10 @@ $("#theme").addEventListener("click", () => {
   try { localStorage.setItem("got-theme", theme); } catch { /* ignore */ }
 });
 
+$("#offline-form").elements.date.value = isoDay(new Date());
+$("#offline-form").elements.date.max = isoDay(new Date());
+
 syncControls();
 load();
+loadOffline();
+loadEmail();

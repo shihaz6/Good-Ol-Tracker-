@@ -190,7 +190,63 @@ def run_batch(conn, rules, limit: int = BATCH * 2, embed_fn=embed) -> dict:
             out.append((url, model, sha(text), pack(vec), cat, score, rh, now))
     conn.executemany("INSERT OR REPLACE INTO page_ai VALUES (?, ?, ?, ?, ?, ?, ?, ?)", out)
     conn.commit()
-    return {"status": "ok", "embedded": len(to_embed), "reclassified": len(reclassify), "model": model}
+    q_embedded, q_reclassified = _run_queries(conn, key, model, rh, protos, limit, embed_fn)
+    return {"status": "ok", "embedded": len(to_embed), "reclassified": len(reclassify),
+            "queries_embedded": q_embedded, "queries_reclassified": q_reclassified, "model": model}
+
+
+def query_key(query: str) -> str:
+    return " ".join((query or "").lower().split())[:500]
+
+
+def _run_queries(conn, key, model, rh, protos, limit, embed_fn):
+    """Same as pages, for search queries. Each distinct query is embedded once."""
+    # Keys are normalised in Python (SQLite's lower() is ASCII-only), so match here too.
+    recent = conn.execute(
+        "SELECT query, MAX(ts) AS t FROM searches GROUP BY query ORDER BY t DESC LIMIT 2000").fetchall()
+    wanted = list(dict.fromkeys(k for k in (query_key(q) for q, _ in recent) if k))
+    existing = {}
+    for i in range(0, len(wanted), 500):
+        chunk = wanted[i:i + 500]
+        for k, vec, amodel, arh in conn.execute(
+                f"SELECT query_key, vector, model, rules_hash FROM query_ai"
+                f" WHERE query_key IN ({','.join('?' * len(chunk))})", chunk):
+            existing[k] = (vec, amodel, arh)
+    now = time.time()
+    todo, out = [], []
+    for k in wanted:
+        vec, amodel, arh = existing.get(k, (None, None, None))
+        if vec is not None and amodel == model and arh == rh:
+            continue  # up to date
+        if len(todo) + len(out) >= limit:
+            break
+        if vec and amodel == model:
+            cat, score = classify(unpack(vec), protos)
+            out.append((k, model, vec, cat, score, rh, now))
+        else:
+            todo.append(k)
+    reclassified = len(out)
+    for i in range(0, len(todo), BATCH):
+        chunk = todo[i:i + BATCH]
+        _, vecs = embed_fn([f"A web search for: {q}" for q in chunk], key, model)
+        for q, vec in zip(chunk, vecs):
+            cat, score = classify(vec, protos)
+            out.append((q, model, pack(vec), cat, score, rh, now))
+    conn.executemany("INSERT OR REPLACE INTO query_ai VALUES (?, ?, ?, ?, ?, ?, ?)", out)
+    conn.commit()
+    return len(todo), reclassified
+
+
+def query_categories(conn, queries) -> dict:
+    """{query_key: ai category} for the given queries (None when undecided)."""
+    keys_ = list({query_key(q) for q in queries if q})
+    out = {}
+    for i in range(0, len(keys_), 500):
+        chunk = keys_[i:i + 500]
+        out.update(conn.execute(
+            f"SELECT query_key, category FROM query_ai WHERE query_key IN ({','.join('?' * len(chunk))})",
+            chunk).fetchall())
+    return out
 
 
 def counts(conn) -> dict:
@@ -198,4 +254,6 @@ def counts(conn) -> dict:
         "SELECT COUNT(*), COUNT(category) FROM page_ai").fetchone()
     pending = conn.execute(
         "SELECT COUNT(*) FROM pages p LEFT JOIN page_ai a ON a.url = p.url WHERE a.url IS NULL").fetchone()[0]
-    return {"pages_done": done, "pages_categorised": decided, "pages_pending": pending}
+    q_done, q_decided = conn.execute("SELECT COUNT(*), COUNT(category) FROM query_ai").fetchone()
+    return {"pages_done": done, "pages_categorised": decided, "pages_pending": pending,
+            "queries_done": q_done, "queries_categorised": q_decided}

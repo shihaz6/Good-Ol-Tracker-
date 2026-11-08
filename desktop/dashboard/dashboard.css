@@ -233,6 +233,79 @@ pre#preview-json {
   font: 12px/1.45 ui-monospace, Consolas, monospace; white-space: pre;
 }
 
+/* ------------------------------------------------------------ export menu */
+
+.menu { position: relative; margin: 0; }
+.menu > summary { list-style: none; display: inline-block; }
+.menu > summary::-webkit-details-marker { display: none; }
+.menu-list {
+  position: absolute; z-index: 5; top: calc(100% + 6px); left: 0; min-width: 240px;
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); display: grid;
+}
+.menu-list a, .menu-list button {
+  display: block; text-align: left; padding: 7px 10px; border-radius: 6px; text-decoration: none;
+  color: var(--ink); background: none; border: 0; font-size: 13px;
+}
+.menu-list a:hover, .menu-list button:hover { background: var(--wash); }
+
+/* ------------------------------------------------------------ trends */
+
+.trend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+@media (max-width: 900px) { .trend-grid { grid-template-columns: minmax(0, 1fr); } }
+h3.mini { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; }
+.line svg { display: block; width: 100%; overflow: visible; }
+.line .grid { stroke: var(--grid); stroke-width: 1; }
+.line .base { stroke: var(--axis); stroke-width: 1; }
+.line .series { fill: none; stroke: var(--ink-2); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.line .dot { fill: var(--ink-2); stroke: var(--surface); stroke-width: 2; }
+.line .hit { fill: transparent; }
+.line .hit:hover { fill: var(--wash); }
+.line text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.delta { white-space: nowrap; }
+.delta .ico { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%;
+  font-size: 9px; color: #fff; margin-right: 4px; vertical-align: -2px; }
+.delta.good .ico { background: #0ca30c; }
+.delta.bad .ico { background: #d03b3b; }
+.delta.same { color: var(--muted); }
+
+/* ------------------------------------------------------------ forms */
+
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; align-items: end; }
+.form-grid label { display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); }
+.form-grid .span2 { grid-column: 1 / -1; }
+.form-grid label.check { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.form-grid input, .form-grid select {
+  font: inherit; color: var(--ink); background: var(--page); border: 1px solid var(--ring);
+  border-radius: 8px; padding: 6px 8px; min-width: 0;
+}
+.form-grid input[type=checkbox] { width: 16px; height: 16px; padding: 0; }
+.form-grid .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.formmsg { min-height: 20px; margin: 8px 0 0; font-size: 13px; color: var(--ink-2); }
+.formmsg.bad { color: var(--error); }
+.steps { padding-left: 20px; margin: 8px 0; font-size: 13px; color: var(--ink-2); }
+.linkbtn { background: none; border: 0; color: var(--ink-2); text-decoration: underline; padding: 0; font-size: 13px; }
+
+/* ------------------------------------------------------------ print / PDF */
+
+@media print {
+  :root:root:root:root {
+    color-scheme: light;
+    --page: #ffffff; --surface: #ffffff; --ink: #0b0b0b; --ink-2: #52514e; --muted: #6b6a66;
+    --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11, 11, 11, 0.18); --wash: rgba(11, 11, 11, 0.05);
+    --cat-1: #2a78d6; --cat-2: #eb6834; --cat-3: #1baf7a; --cat-4: #eda100; --cat-5: #e87ba4;
+    --cat-6: #008300; --cat-7: #6250d6; --cat-unsure: #898781; --cat-other: #c3c2b7;
+  }
+  body { background: #fff; }
+  .health, .filters .seg, .filters .day, .filters .menu, #theme, button, form, .formmsg,
+  #email-card, #rules-card, details > summary, #preview { display: none !important; }
+  details[open] > *:not(summary) { display: block; }
+  .card, .tile { break-inside: avoid; box-shadow: none; }
+  .grid { gap: 10px; }
+  a { text-decoration: none; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+
 /* ------------------------------------------------------------ tooltip */
 
 .tip {

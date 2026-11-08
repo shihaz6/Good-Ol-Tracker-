@@ -15,16 +15,24 @@ Endpoints:
   GET  /api/health          -> tracker / extension / AI / backup status
   GET  /api/weekly/preview  -> exactly what a weekly summary would send to Groq
   POST /api/weekly          -> generate a summary of the last 7 days (dashboard only)
+  GET  /api/trends?end=&days=          -> per-day series + this week vs last week
+  GET  /api/manual?start=&end=         -> offline time entries
+  POST /api/manual {date,start,end,category,note} / POST /api/manual/delete {id}
+  GET  /api/export?kind=activity|daily|searches&start=&end=  -> CSV download
+  GET  /api/email                      -> email settings (never the password)
+  POST /api/email/settings {...,password?} / POST /api/email/test
        Same-origin only: other websites can't read it (no CORS, Sec-Fetch-Site and
        Origin checks, Host check against DNS rebinding).
 """
 
+import csv
+import io
 import json
 import logging
 import secrets
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -32,8 +40,10 @@ from urllib.parse import parse_qs
 import ai_categorize
 import analytics
 import backup
+import categorize
 import db
 import keys
+import mailer
 import weekly
 
 PORT = 47321
@@ -173,18 +183,149 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "dashboard files missing"})
             return self._send_bytes(200, body, ctype, PAGE_HEADERS if name.endswith(".html") else None)
 
-        if path in ("/api/summary", "/api/ai", "/api/weekly/preview", "/api/health"):
+        routes = {
+            "/api/summary": lambda: self._summary(parse_qs(query)),
+            "/api/ai": self._ai_status,
+            "/api/health": self._health,
+            "/api/weekly/preview": self._weekly_preview,
+            "/api/trends": lambda: self._trends(parse_qs(query)),
+            "/api/manual": lambda: self._manual_list(parse_qs(query)),
+            "/api/export": lambda: self._export(parse_qs(query)),
+            "/api/email": lambda: self._json(200, mailer.status()),
+        }
+        if path in routes:
             if not self._dashboard_ok(api=True):
                 return self._send(403, {"error": "forbidden"})
-            if path == "/api/summary":
-                return self._summary(parse_qs(query))
-            if path == "/api/ai":
-                return self._ai_status()
-            if path == "/api/health":
-                return self._health()
-            return self._weekly_preview()
+            return routes[path]()
 
         self._send(404, {"error": "not found"})
+
+    # --- helpers for dashboard API -------------------------------------------------
+
+    def _json(self, code: int, obj) -> None:
+        self._send_bytes(code, json.dumps(obj).encode(), "application/json")
+
+    def _strict_same_origin(self) -> bool:
+        """For anything that changes data or calls out (POST): only the dashboard page.
+        Browsers always send Origin on POST, so it's required and must be ours."""
+        return (self.headers.get("Host") in ALLOWED_HOSTS
+                and self.headers.get("Origin") in SAME_ORIGINS
+                and self.headers.get("Sec-Fetch-Site", "same-origin") == "same-origin")
+
+    def _read_json(self) -> dict:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length > 20_000:
+            raise ValueError("request too large")
+        data = json.loads(self.rfile.read(length) or b"{}") if length else {}
+        if not isinstance(data, dict):
+            raise ValueError("expected a JSON object")
+        return data
+
+    @staticmethod
+    def _range(params, default_days=1):
+        today = date.today()
+        end = date.fromisoformat(params.get("end", [today.isoformat()])[0])
+        start = date.fromisoformat(params.get("start", [(end - timedelta(days=default_days - 1)).isoformat()])[0])
+        if end < start:
+            start, end = end, start
+        if (end - start).days >= MAX_RANGE_DAYS:
+            start = end - timedelta(days=MAX_RANGE_DAYS - 1)
+        return start, end
+
+    # --- trends / offline time / export / email -------------------------------------
+
+    def _trends(self, params):
+        try:
+            end = date.fromisoformat(params.get("end", [date.today().isoformat()])[0])
+            days = max(7, min(90, int(params.get("days", ["30"])[0])))
+        except ValueError:
+            return self._send(400, {"error": "bad end/days"})
+        conn = db.connect()
+        try:
+            return self._json(200, analytics.trends(conn, end, days))
+        except ValueError as exc:
+            return self._send(500, {"error": f"categories.json: {exc}"})
+        finally:
+            conn.close()
+
+    def _manual_list(self, params):
+        try:
+            start, end = self._range(params, default_days=30)
+        except ValueError:
+            return self._send(400, {"error": "start/end must be YYYY-MM-DD"})
+        conn = db.connect()
+        try:
+            rows = conn.execute(
+                "SELECT id, start_ts, end_ts, category, note FROM manual_entries WHERE end_ts > ? AND start_ts < ?"
+                " ORDER BY start_ts DESC LIMIT 200",
+                (analytics._midnight(start), analytics._midnight(end + timedelta(days=1)))).fetchall()
+        finally:
+            conn.close()
+        return self._json(200, {"entries": [dict(zip(("id", "start", "end", "category", "note"), r)) for r in rows]})
+
+    def _manual_add(self, body):
+        day = date.fromisoformat(str(body.get("date", "")))
+        t0 = datetime.strptime(str(body.get("start", "")), "%H:%M").time()
+        t1 = datetime.strptime(str(body.get("end", "")), "%H:%M").time()
+        start = datetime.combine(day, t0)
+        end = datetime.combine(day, t1)
+        if end <= start:
+            end += timedelta(days=1)  # e.g. 23:00 -> 01:00
+        conn = db.connect()
+        try:
+            rules = categorize.Rules()
+            entry_id = db.add_manual_entry(conn, start.timestamp(), end.timestamp(),
+                                           str(body.get("category", "")), body.get("note", ""), rules.categories)
+        finally:
+            conn.close()
+        return self._json(200, {"ok": True, "id": entry_id})
+
+    def _manual_delete(self, body):
+        conn = db.connect()
+        try:
+            ok = db.delete_manual_entry(conn, int(body.get("id")))
+        finally:
+            conn.close()
+        return self._json(200 if ok else 404, {"ok": ok})
+
+    def _export(self, params):
+        kind = params.get("kind", ["activity"])[0]
+        try:
+            start, end = self._range(params)
+        except ValueError:
+            return self._send(400, {"error": "start/end must be YYYY-MM-DD"})
+        conn = db.connect()
+        try:
+            header, rows = analytics.export_rows(conn, kind, start, end)
+        except ValueError as exc:
+            return self._send(400, {"error": str(exc)})
+        finally:
+            conn.close()
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(header)
+        writer.writerows(rows)
+        name = f"good-ol-tracker-{kind}-{start.isoformat()}" + ("" if start == end else f"-to-{end.isoformat()}")
+        return self._send_bytes(200, buf.getvalue().encode("utf-8-sig"), "text/csv; charset=utf-8",
+                                {"Content-Disposition": f'attachment; filename="{name}.csv"'})
+
+    def _email_settings(self, body):
+        password = body.pop("password", "")
+        settings = mailer.save_settings(body)
+        if password:
+            mailer.save_password(password)
+        return self._json(200, {"ok": True, **mailer.status(), **settings})
+
+    def _email_test(self, _body):
+        conn = db.connect()
+        try:
+            to = mailer.send_test(conn)
+        finally:
+            conn.close()
+        return self._json(200, {"ok": True, "to": to})
 
     def _ai_status(self):
         conn = db.connect()
@@ -233,11 +374,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send_bytes(200, json.dumps(payload).encode(), "application/json")
 
     def _weekly_generate(self):
-        # Triggers an outside API call, so only the dashboard page itself may do it:
-        # an Origin header is required (browsers always send one on POST) and must be ours.
-        if (self.headers.get("Host") not in ALLOWED_HOSTS
-                or self.headers.get("Origin") not in SAME_ORIGINS
-                or self.headers.get("Sec-Fetch-Site", "same-origin") != "same-origin"):
+        # Triggers an outside API call, so only the dashboard page itself may do it.
+        if not self._strict_same_origin():
             return self._send(403, {"error": "forbidden"})
         start, end = weekly.last_7_days()
         conn = db.connect()
@@ -275,6 +413,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/api/weekly":
             return self._weekly_generate()
+        posts = {
+            "/api/manual": self._manual_add,
+            "/api/manual/delete": self._manual_delete,
+            "/api/email/settings": self._email_settings,
+            "/api/email/test": self._email_test,
+        }
+        if self.path in posts:
+            if not self._strict_same_origin():
+                return self._send(403, {"error": "forbidden"})
+            try:
+                return posts[self.path](self._read_json())
+            except mailer.MailError as exc:
+                return self._send(400, {"error": str(exc)})
+            except (ValueError, TypeError, KeyError) as exc:
+                return self._send(400, {"error": str(exc) or "bad request"})
         if self.path != "/ingest":
             return self._send(404, {"error": "not found"})
         if not self._authorized():

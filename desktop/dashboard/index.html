@@ -25,6 +25,15 @@
       <button type="button" data-range="30">Last 30 days</button>
     </div>
     <label class="day">Day <input type="date" id="day"></label>
+    <details class="menu" id="export-menu">
+      <summary class="ghost">Export</summary>
+      <div class="menu-list">
+        <a id="export-activity" download>Activity (every stretch) · CSV</a>
+        <a id="export-daily" download>Daily totals · CSV</a>
+        <a id="export-searches" download>Searches · CSV</a>
+        <button type="button" id="print">Print / save as PDF</button>
+      </div>
+    </details>
     <span id="updated" class="muted"></span>
   </nav>
 
@@ -81,6 +90,19 @@
         <details><summary>Show as table</summary><div id="timeline-table"></div></details>
       </section>
 
+      <section class="card wide" id="trends-card">
+        <h2>Trends</h2>
+        <p class="sub" id="trends-sub">Last 30 days</p>
+        <div class="trend-grid">
+          <div><h3 class="mini">Productive time per day</h3><div id="trend-productive"></div></div>
+          <div><h3 class="mini">Longest focus per day</h3><div id="trend-focus"></div></div>
+          <div><h3 class="mini">Switches per hour</h3><div id="trend-switches"></div></div>
+        </div>
+        <h3 class="mini" style="margin-top:18px">This week vs last week</h3>
+        <div id="week-compare"></div>
+        <details><summary>Show as table</summary><div id="trends-table"></div></details>
+      </section>
+
       <section class="card">
         <h2>Top apps and sites</h2>
         <div id="apps"></div>
@@ -101,6 +123,51 @@
       <section class="card wide">
         <h2>Searches</h2>
         <div id="searches"></div>
+      </section>
+
+      <section class="card" id="offline-card">
+        <h2>Offline time</h2>
+        <p class="sub">Log time away from the PC (a lecture, reading, a study group). It counts in your
+          categories, but not where the PC was in use, so nothing is counted twice.</p>
+        <form id="offline-form" class="form-grid">
+          <label>Date <input type="date" name="date" required></label>
+          <label>From <input type="time" name="start" required></label>
+          <label>To <input type="time" name="end" required></label>
+          <label>Category <select name="category" required></select></label>
+          <label class="span2">Note <input name="note" maxlength="200" placeholder="e.g. DBMS lecture"></label>
+          <button type="submit" class="ghost">Add</button>
+        </form>
+        <p class="formmsg" id="offline-msg" role="status"></p>
+        <div id="offline-list"></div>
+      </section>
+
+      <section class="card" id="email-card">
+        <h2>Email reports</h2>
+        <p class="sub" id="email-sub"></p>
+        <form id="email-form" class="form-grid">
+          <label class="span2">Your Gmail <input type="email" name="address" autocomplete="email"></label>
+          <label class="span2">Send to <input type="email" name="to" placeholder="same as your Gmail"></label>
+          <label class="span2">App Password <input type="password" name="password" autocomplete="new-password"
+            placeholder="16 letters · leave blank to keep the saved one"></label>
+          <label class="check span2"><input type="checkbox" name="daily_enabled"> Daily recap at
+            <input type="time" name="daily_time"></label>
+          <label class="check span2"><input type="checkbox" name="weekly_enabled"> Weekly AI summary (Mondays)</label>
+          <div class="span2 buttons">
+            <button type="submit" class="ghost">Save</button>
+            <button type="button" class="ghost" id="email-test">Send a test email</button>
+          </div>
+        </form>
+        <p class="formmsg" id="email-msg" role="status"></p>
+        <details>
+          <summary>How to get a Gmail App Password</summary>
+          <ol class="steps">
+            <li>Turn on 2-Step Verification for your Google account (required for App Passwords).</li>
+            <li>Open myaccount.google.com/apppasswords, name it "Good ol Tracker", click Create.</li>
+            <li>Copy the 16 letters into the box above and Save. Revoke it there any time.</li>
+          </ol>
+          <p class="sub">Emails contain totals, top app/site names, topic words and the AI summary.
+            Never page text, titles, URLs or your searches.</p>
+        </details>
       </section>
 
       <section class="card wide" id="rules-card">

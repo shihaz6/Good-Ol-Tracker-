@@ -62,6 +62,27 @@ CREATE TABLE IF NOT EXISTS page_ai (
     rules_hash  TEXT,                 -- category descriptions it was compared against
     updated_ts  REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS query_ai (
+    query_key   TEXT PRIMARY KEY,     -- lower(trim(search query))
+    model       TEXT NOT NULL,
+    vector      BLOB NOT NULL,
+    category    TEXT,
+    score       REAL,
+    rules_hash  TEXT,
+    updated_ts  REAL NOT NULL
+);
+
+-- Time away from the PC that you log yourself (lectures, reading, ...).
+CREATE TABLE IF NOT EXISTS manual_entries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    start_ts    REAL NOT NULL,
+    end_ts      REAL NOT NULL,
+    category    TEXT NOT NULL,
+    note        TEXT NOT NULL DEFAULT '',
+    created_ts  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_manual_start ON manual_entries(start_ts);
+
 CREATE TABLE IF NOT EXISTS prototype_vectors (
     text_hash   TEXT NOT NULL,
     model       TEXT NOT NULL,
@@ -230,6 +251,28 @@ def insert_searches(conn, searches) -> int:
     )
     conn.commit()
     return len(rows)
+
+
+MAX_MANUAL_SECONDS = 16 * 3600
+
+
+def add_manual_entry(conn, start_ts: float, end_ts: float, category: str, note: str, categories) -> int:
+    start_ts, end_ts = float(start_ts), float(end_ts)
+    if not 0 < end_ts - start_ts <= MAX_MANUAL_SECONDS:
+        raise ValueError("an entry must be longer than 0 and at most 16 hours")
+    if category not in categories:
+        raise ValueError(f"unknown category: {category}")
+    cur = conn.execute(
+        "INSERT INTO manual_entries (start_ts, end_ts, category, note, created_ts) VALUES (?, ?, ?, ?, ?)",
+        (start_ts, end_ts, category, str(note or "").strip()[:200], time.time()))
+    conn.commit()
+    return cur.lastrowid
+
+
+def delete_manual_entry(conn, entry_id: int) -> bool:
+    cur = conn.execute("DELETE FROM manual_entries WHERE id = ?", (int(entry_id),))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def purge_page_text(conn, days: float) -> int:

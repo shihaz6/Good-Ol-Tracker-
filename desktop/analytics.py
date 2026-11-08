@@ -4,11 +4,13 @@ Everything is derived from categorize.categorise(), so the dashboard always agre
 with the report and with the current rules in categories.json.
 """
 
+import dataclasses
 import re
 import time
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
+import ai_categorize
 import categorize
 
 FOCUS_GAP = 120          # a focus streak survives interruptions up to this long (seconds)
@@ -62,10 +64,11 @@ def _terms(text: str):
 
 
 def _focus(items, productive):
-    """Productive streaks, allowing short interruptions (<= FOCUS_GAP)."""
+    """Productive streaks on the PC, allowing short interruptions (<= FOCUS_GAP).
+    Offline time you logged doesn't count: this measures how you work at the computer."""
     streaks, cur = [], None
     for it in items:
-        if it.category not in productive:
+        if it.category not in productive or it.source == "manual":
             continue  # interruptions only matter through the gap they leave
         if cur and it.start - cur["end"] <= FOCUS_GAP:
             cur["end"] = max(cur["end"], it.end)
@@ -100,7 +103,7 @@ def _switches(items):
     """App/site changes between consecutive stretches of activity (not across breaks)."""
     count, prev, prev_end = 0, None, None
     for it in items:
-        if it.seconds < SWITCH_MIN_SECONDS:
+        if it.seconds < SWITCH_MIN_SECONDS or it.source == "manual":
             continue
         key = it.app.lower()
         if prev is not None and key != prev and it.start - prev_end <= FOCUS_GAP:
@@ -183,7 +186,7 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
         a = apps[(it.app, it.source)]
         a["seconds"] += secs
         a["cats"][it.category] += secs
-        a["kind"] = "site" if it.source == "browser" else "app"
+        a["kind"] = {"browser": "site", "manual": "offline"}.get(it.source, "app")
         if it.url:
             p = pages[it.url]
             p["seconds"] += secs
@@ -194,6 +197,7 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
             unsure[(it.app, it.title)] += secs
 
     active = sum(by_cat.values())
+    pc_active = sum(it.seconds for it in items if it.source != "manual")
     prod_secs = sum(v for k, v in by_cat.items() if k in productive)
     switches = _switches(items)
 
@@ -221,6 +225,7 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
     search_rows = conn.execute(
         "SELECT ts, engine, domain, query FROM searches WHERE ts >= ? AND ts < ? ORDER BY ts DESC",
         (start, end)).fetchall()
+    search_ai = ai_categorize.query_categories(conn, [r[3] for r in search_rows[:200]])
     topic_score, topic_searches, topic_pages = Counter(), Counter(), Counter()
     for _, _, _, query in search_rows:
         for term in set(_terms(query)):
@@ -254,7 +259,8 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
                     for h, cats in enumerate(by_hour)],
         "focus": _focus(items, productive),
         "switches": {"count": switches,
-                     "per_hour": round(switches / (active / 3600), 1) if active >= 600 else None},
+                     "per_hour": round(switches / (pc_active / 3600), 1) if pc_active >= 600 else None},
+        "offline_seconds": round(active - pc_active),
         "timeline": _timeline(items, days),
         "top_apps": [
             {"name": name, "kind": a["kind"], "seconds": round(a["seconds"]),
@@ -275,7 +281,7 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
         ],
         "searches": [
             {"ts": ts, "engine": engine, "domain": domain, "query": query,
-             "category": rules.classify_text([(query, 3)]) or ""}
+             "category": categorize.classify_search(rules, query, search_ai.get(ai_categorize.query_key(query)))}
             for ts, engine, domain, query in search_rows[:200]
         ],
         "search_count": len(search_rows),
@@ -285,3 +291,92 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
                    for (site, title), s in sorted(unsure.items(), key=lambda kv: -kv[1])[:10]],
         "now": _right_now(conn, rules) if start_day <= date.today() <= end_day else None,
     }
+
+
+# ----------------------------------------------------------------------------- trends
+
+def _split_by_day(items, days):
+    per = {d.isoformat(): [] for d in days}
+    for it in items:
+        for dt, secs in _pieces(it.start, it.end, "day"):
+            key = dt.date().isoformat()
+            if key in per:
+                s = dt.timestamp()
+                per[key].append(dataclasses.replace(it, start=s, end=s + secs))
+    return per
+
+
+def _period_stats(items, productive) -> dict:
+    by_cat = defaultdict(float)
+    for it in items:
+        by_cat[it.category] += it.seconds
+    active = sum(by_cat.values())
+    pc_active = sum(it.seconds for it in items if it.source != "manual")
+    focus = _focus(items, productive)
+    switches = _switches(items)
+    return {
+        "active": round(active),
+        "productive": round(sum(v for k, v in by_cat.items() if k in productive)),
+        "by_category": {k: round(v) for k, v in by_cat.items()},
+        "longest_focus": focus["longest"]["seconds"] if focus["longest"] else 0,
+        "deep_count": focus["deep_count"],
+        "switches_per_hour": round(switches / (pc_active / 3600), 1) if pc_active >= 600 else None,
+    }
+
+
+def trends(conn, end_day: date, days: int = 30, rules=None) -> dict:
+    """Per-day series for the last `days` days + this week vs the week before."""
+    rules = rules or categorize.Rules()
+    productive = rules.productive
+    span = max(days, 14)
+    all_days = [end_day - timedelta(days=span - 1 - i) for i in range(span)]
+    items = sorted(categorize.categorise(conn, _midnight(all_days[0]), _midnight(end_day + timedelta(days=1)), rules),
+                   key=lambda it: it.start)
+    per = _split_by_day(items, all_days)
+    keys = list(per)
+
+    def week(day_keys):
+        merged = sorted((it for k in day_keys for it in per[k]), key=lambda it: it.start)
+        return {"start": day_keys[0], "end": day_keys[-1], **_period_stats(merged, productive)}
+
+    return {
+        "categories": rules.categories,
+        "productive": [c for c in rules.categories if c in productive],
+        "days": [{"date": k, **_period_stats(per[k], productive)} for k in keys[-days:]],
+        "this_week": week(keys[-7:]),
+        "last_week": week(keys[-14:-7]),
+    }
+
+
+# ----------------------------------------------------------------------------- exports
+
+def _iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts).isoformat(sep=" ", timespec="seconds")
+
+
+def export_rows(conn, kind: str, start_day: date, end_day: date, rules=None):
+    """-> (header, rows) for CSV export. kind: activity | daily | searches."""
+    rules = rules or categorize.Rules()
+    start, end = _midnight(start_day), _midnight(end_day + timedelta(days=1))
+    if kind == "activity":
+        items = sorted(categorize.categorise(conn, start, end, rules), key=lambda it: it.start)
+        return (["start", "end", "minutes", "category", "source", "app_or_site", "title"],
+                [[_iso(it.start), _iso(it.end), round(it.seconds / 60, 2), it.category, it.source, it.app, it.title]
+                 for it in items])
+    if kind == "daily":
+        s = summary(conn, start_day, end_day, rules)
+        cats = rules.categories
+        return (["date", "active_hours", "productive_hours", *[f"{c}_hours" for c in cats]],
+                [[p["date"], round(p["active"] / 3600, 2),
+                  round(sum(v for k, v in p["by_category"].items() if k in rules.productive) / 3600, 2),
+                  *[round(p["by_category"].get(c, 0) / 3600, 2) for c in cats]]
+                 for p in s["per_day"]])
+    if kind == "searches":
+        rows = conn.execute("SELECT ts, engine, domain, query FROM searches WHERE ts >= ? AND ts < ? ORDER BY ts",
+                            (start, end)).fetchall()
+        ai = ai_categorize.query_categories(conn, [r[3] for r in rows])
+        return (["time", "engine", "site", "query", "category"],
+                [[_iso(ts), engine, domain, q,
+                  categorize.classify_search(rules, q, ai.get(ai_categorize.query_key(q)))]
+                 for ts, engine, domain, q in rows])
+    raise ValueError(f"unknown export: {kind}")

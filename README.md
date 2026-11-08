@@ -112,7 +112,32 @@ Today's view refreshes every 30 seconds.
 - Every chart has a *Show as table* view. Light/dark follows the system; the
   *Theme* button overrides it.
 
-What counts as productive is the `"productive"` list in `categories.json`. Focus
+- **Trends:** 30-day lines for productive time, longest focus and switches per hour,
+  plus a this-week-vs-last-week table.
+- **Offline time:** log time away from the PC (lecture, reading, study group) with a
+  category. It counts in categories and totals, only for the parts when the PC wasn't
+  in use (never double counted), and never as PC focus or switching.
+- **Export** (button next to the date picker): CSV of every activity stretch, daily
+  totals, or searches for the selected range, and *Print / save as PDF* for a report.
+- **Email reports:** see below.
+
+What counts as productive is the `"productive"` list in `categories.json`.
+
+## Email reports (Gmail)
+
+Set up on the dashboard's **Email reports** card: your Gmail address, where to send,
+and a Google **App Password** (16 letters; needs 2-Step Verification; create it at
+myaccount.google.com/apppasswords, revoke it there any time). It's saved to
+`data\gmail_key.txt` (gitignored), never shown again.
+
+- **Daily recap** at a time you choose (off by default): today's totals, categories,
+  focus, top apps/sites and topics.
+- **Weekly AI summary** (on by default): emailed once each Monday's summary is written,
+  with this week vs last week.
+- **Send a test email** sends today's recap right away.
+
+Emails never contain page text, page titles, URLs or your searches.
+`python desktop\mailer.py --test` sends a test from the command line. Focus
 streaks tolerate interruptions up to 2 minutes (`FOCUS_GAP` in `desktop/analytics.py`).
 The dashboard loads nothing from the internet, and other websites can't read its data.
 
@@ -126,7 +151,7 @@ Two optional API keys, each in its own file in `data\` (gitignored) or an env va
 | Groq | `data\groq_key.txt` (`GROQ_API_KEY`) | Weekly summary | Totals only: hours per category/day, focus stats, top app/site names, topic words. Never page text, titles, URLs or searches |
 
 - **AI categoriser** (`desktop/ai_categorize.py`): runs in the tracker's background every
-  2 minutes. Compares each page to the example `descriptions` per category in
+  2 minutes, for pages and for search queries (each distinct query once; keywords still win). Compares each page to the example `descriptions` per category in
   `categories.json`. Rules and keywords always win; the AI only fills in pages they
   can't decide. Each page is embedded once and cached; editing `descriptions`
   re-categorises without re-sending pages.

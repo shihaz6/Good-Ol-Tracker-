@@ -1,0 +1,275 @@
+"""Email reports through Gmail (SMTP + an App Password).
+
+Settings: data/email.json (edited from the dashboard). Password: data/gmail_key.txt
+(or GMAIL_API_KEY), a 16-character Google App Password, never your normal password.
+
+Emails contain totals, top app/site names, topic words and the AI summary. Never page
+text, page titles, URLs or search queries.
+
+    python desktop/mailer.py --test     # send today's recap now
+"""
+
+import argparse
+import html
+import json
+import logging
+import re
+import smtplib
+import time
+from datetime import date, datetime, timedelta
+from email.message import EmailMessage
+
+import analytics
+import categorize
+import db
+import keys
+import weekly
+
+log = logging.getLogger("tracker")
+
+SETTINGS_PATH = db.DATA_DIR / "email.json"
+SMTP_HOST, SMTP_PORT = "smtp.gmail.com", 465
+DASHBOARD = "http://127.0.0.1:47321/"
+DEFAULTS = {"address": "", "to": "", "daily_enabled": False, "daily_time": "21:00", "weekly_enabled": True}
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class MailError(Exception):
+    pass
+
+
+# --------------------------------------------------------------------- settings
+
+def load_settings() -> dict:
+    try:
+        raw = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = {}
+    return {**DEFAULTS, **{k: v for k, v in raw.items() if k in DEFAULTS}}
+
+
+def save_settings(new: dict) -> dict:
+    s = load_settings()
+    address = str(new.get("address", s["address"])).strip()
+    to = str(new.get("to", s["to"])).strip() or address
+    daily_time = str(new.get("daily_time", s["daily_time"])).strip()
+    if address and not EMAIL_RE.match(address):
+        raise ValueError("Gmail address doesn't look like an email address")
+    if to and not EMAIL_RE.match(to):
+        raise ValueError("'Send to' doesn't look like an email address")
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", daily_time):
+        raise ValueError("Daily time must be HH:MM (24-hour)")
+    s.update(address=address, to=to, daily_time=daily_time,
+             daily_enabled=bool(new.get("daily_enabled", s["daily_enabled"])),
+             weekly_enabled=bool(new.get("weekly_enabled", s["weekly_enabled"])))
+    db.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    SETTINGS_PATH.write_text(json.dumps(s, indent=2), encoding="utf-8")
+    return s
+
+
+def save_password(password: str) -> None:
+    pw = re.sub(r"\s+", "", password or "")  # Google shows it as "abcd efgh ijkl mnop"
+    if not re.fullmatch(r"[A-Za-z0-9]{16}", pw):
+        raise ValueError("An App Password is 16 letters (Google shows it in 4 groups of 4)")
+    (db.DATA_DIR / "gmail_key.txt").write_text(pw, encoding="utf-8")
+
+
+def status() -> dict:
+    s = load_settings()
+    return {**s, "has_password": bool(keys.load_key("gmail")),
+            "configured": bool(s["address"] and keys.load_key("gmail"))}
+
+
+# --------------------------------------------------------------------- content
+
+def _dur(seconds) -> str:
+    m = round((seconds or 0) / 60)
+    h, m = divmod(m, 60)
+    return f"{h}h {m:02d}m" if h else f"{m}m"
+
+
+def _delta(now_v, prev_v, unit="dur", good_up=True) -> str:
+    if prev_v in (None, 0) or now_v is None:
+        return ""
+    diff = now_v - prev_v
+    if abs(diff) < (60 if unit == "dur" else 0.5):
+        return " (same as last week)"
+    arrow = "▲" if diff > 0 else "▼"
+    word = "better" if (diff > 0) == good_up else "worse"
+    shown = _dur(abs(diff)) if unit == "dur" else f"{abs(diff):g}"
+    return f" ({arrow} {shown} vs last week, {word})"
+
+
+def _html_doc(title: str, blocks: list) -> str:
+    style = "font-family:Segoe UI,Arial,sans-serif;color:#0b0b0b;max-width:560px;line-height:1.5"
+    return (f'<div style="{style}"><h2 style="font-size:18px;margin:0 0 12px">{html.escape(title)}</h2>'
+            + "".join(blocks)
+            + f'<p style="color:#898781;font-size:12px;margin-top:24px">Sent by your Good ol Tracker. '
+              f'Dashboard (on your PC): <a href="{DASHBOARD}">{DASHBOARD}</a></p></div>')
+
+
+def _html_table(rows) -> str:
+    cells = "".join(
+        f'<tr><td style="padding:4px 16px 4px 0;color:#52514e">{html.escape(str(a))}</td>'
+        f'<td style="padding:4px 0;font-weight:600">{html.escape(str(b))}</td></tr>' for a, b in rows)
+    return f'<table style="border-collapse:collapse;margin:0 0 16px">{cells}</table>'
+
+
+def _html_markdown(md: str) -> str:
+    out, in_list = [], None
+    for raw in md.splitlines():
+        line = re.sub(r"\*\*|__|`", "", raw.strip())
+        bullet = re.match(r"^(?:[-*•]|\d+[.)])\s+(.*)", line)
+        if bullet:
+            if not in_list:
+                out.append("<ul style='padding-left:20px;margin:0 0 10px'>")
+                in_list = True
+            out.append(f"<li>{html.escape(bullet.group(1))}</li>")
+            continue
+        if in_list:
+            out.append("</ul>")
+            in_list = None
+        if not line:
+            continue
+        heading = re.match(r"^#{1,6}\s+(.*)", line)
+        out.append(f"<h3 style='font-size:15px;margin:14px 0 4px'>{html.escape(heading.group(1))}</h3>" if heading
+                   else f"<p style='margin:0 0 8px'>{html.escape(line)}</p>")
+    if in_list:
+        out.append("</ul>")
+    return "".join(out)
+
+
+def build_daily(conn, day: date, rules=None):
+    s = analytics.summary(conn, day, day, rules)
+    t = s["totals"]
+    if not t["active"]:
+        raise MailError(f"No activity recorded on {day.isoformat()}")
+    pct = round(100 * t["productive"] / t["active"])
+    label = day.strftime("%a %d %b")
+    subject = f"Good ol Tracker · {label}: {_dur(t['productive'])} productive ({pct}%)"
+    longest = s["focus"]["longest"]
+    stats = [
+        ("Active", _dur(t["active"])),
+        ("Productive", f"{_dur(t['productive'])} ({pct}%)"),
+        ("Longest focus", f"{_dur(longest['seconds'])} ({longest['category']})" if longest else "none over 5m"),
+        ("Deep focus sessions (25m+)", s["focus"]["deep_count"]),
+        ("Switches per hour", s["switches"]["per_hour"] if s["switches"]["per_hour"] is not None else "-"),
+        ("Searches", s["search_count"]),
+    ]
+    if s["offline_seconds"]:
+        stats.insert(2, ("Offline (logged)", _dur(s["offline_seconds"])))
+    cats = sorted(t["by_category"].items(), key=lambda kv: -kv[1])
+    apps = [(a["name"], _dur(a["seconds"])) for a in s["top_apps"][:5]]
+    topics = ", ".join(x["term"] for x in s["topics"][:10]) or "-"
+
+    text = "\n".join([subject, "", *[f"{a}: {b}" for a, b in stats], "", "By category:",
+                      *[f"  {c}: {_dur(v)}" for c, v in cats], "", "Top apps and sites:",
+                      *[f"  {a}: {b}" for a, b in apps], "", f"Topics: {topics}", "", f"Dashboard: {DASHBOARD}"])
+    body = _html_doc(subject, [
+        _html_table(stats),
+        "<h3 style='font-size:15px;margin:0 0 4px'>By category</h3>", _html_table([(c, _dur(v)) for c, v in cats]),
+        "<h3 style='font-size:15px;margin:0 0 4px'>Top apps and sites</h3>", _html_table(apps),
+        f"<p><b>Topics:</b> {html.escape(topics)}</p>",
+    ])
+    return subject, text, body
+
+
+def build_weekly(conn, summary: dict, rules=None):
+    end = date.fromisoformat(summary["end"])
+    tr = analytics.trends(conn, end, days=14, rules=rules)
+    now_w, prev_w = tr["this_week"], tr["last_week"]
+    rng = f"{date.fromisoformat(summary['start']).strftime('%d %b')} – {end.strftime('%d %b')}"
+    subject = f"Good ol Tracker · week {rng}: {_dur(now_w['productive'])} productive"
+    compare = [
+        ("Active", _dur(now_w["active"]) + _delta(now_w["active"], prev_w["active"])),
+        ("Productive", _dur(now_w["productive"]) + _delta(now_w["productive"], prev_w["productive"])),
+        ("Longest focus", _dur(now_w["longest_focus"]) + _delta(now_w["longest_focus"], prev_w["longest_focus"])),
+        ("Deep focus sessions", f"{now_w['deep_count']}" + _delta(now_w["deep_count"], prev_w["deep_count"], "n")),
+        ("Switches per hour", f"{now_w['switches_per_hour'] or '-'}"
+         + _delta(now_w["switches_per_hour"], prev_w["switches_per_hour"], "n", good_up=False)),
+    ]
+    text = "\n".join([subject, "", summary["text"], "", "This week vs last week:",
+                      *[f"  {a}: {b}" for a, b in compare], "", f"Dashboard: {DASHBOARD}"])
+    body = _html_doc(subject, [_html_markdown(summary["text"]),
+                               "<h3 style='font-size:15px;margin:16px 0 4px'>This week vs last week</h3>",
+                               _html_table(compare)])
+    return subject, text, body
+
+
+# --------------------------------------------------------------------- sending
+
+def send(subject: str, text: str, body_html: str, smtp_factory=None) -> str:
+    s = load_settings()
+    password = keys.load_key("gmail")
+    if not s["address"] or not password:
+        raise MailError("Email isn't set up: add your Gmail address and App Password on the dashboard")
+    msg = EmailMessage()
+    msg["Subject"], msg["From"], msg["To"] = subject, f"Good ol Tracker <{s['address']}>", s["to"] or s["address"]
+    msg.set_content(text)
+    msg.add_alternative(body_html, subtype="html")
+    factory = smtp_factory or (lambda: smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30))
+    try:
+        with factory() as smtp:
+            smtp.login(s["address"], password)
+            smtp.send_message(msg)
+    except smtplib.SMTPAuthenticationError as exc:
+        raise MailError("Gmail rejected the login: check the address and App Password "
+                        "(2-Step Verification must be on for App Passwords)") from exc
+    except (smtplib.SMTPException, OSError) as exc:
+        raise MailError(f"Couldn't send via Gmail: {exc}") from exc
+    log.info("email sent: %s", subject)
+    return msg["To"]
+
+
+def maybe_send(conn, now: datetime | None = None) -> list:
+    """Called by the tracker's background thread. Sends what's due, at most once each."""
+    now = now or datetime.now()
+    s = load_settings()
+    if not (s["address"] and keys.load_key("gmail")):
+        return []
+    sent = []
+    today = now.date().isoformat()
+    if s["daily_enabled"] and now.strftime("%H:%M") >= s["daily_time"] and db.get_meta(conn, "last_daily_email") != today:
+        db.set_meta(conn, "last_daily_email", today)  # mark first: never spam on repeated failures
+        try:
+            send(*build_daily(conn, now.date()))
+            sent.append("daily")
+        except MailError as exc:
+            log.warning("daily email not sent: %s", exc)
+    latest = weekly.latest(conn)
+    if (s["weekly_enabled"] and latest and date.fromisoformat(latest["start"]).weekday() == 0
+            and date.fromisoformat(latest["end"]) - date.fromisoformat(latest["start"]) == timedelta(days=6)
+            and str(latest["id"]) != db.get_meta(conn, "last_weekly_email")):
+        db.set_meta(conn, "last_weekly_email", latest["id"])
+        try:
+            send(*build_weekly(conn, latest))
+            sent.append("weekly")
+        except MailError as exc:
+            log.warning("weekly email not sent: %s", exc)
+    return sent
+
+
+def send_test(conn) -> str:
+    """Today's recap right now (or yesterday's if today is empty)."""
+    rules = categorize.Rules()
+    try:
+        content = build_daily(conn, date.today(), rules)
+    except MailError:
+        content = build_daily(conn, date.today() - timedelta(days=1), rules)
+    return send(*content)
+
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser(description="Good ol Tracker email reports")
+    p.add_argument("--test", action="store_true", help="send today's recap now")
+    a = p.parse_args()
+    c = db.connect()
+    try:
+        if a.test:
+            print("Sent to", send_test(c))
+        else:
+            print(json.dumps(status(), indent=2))
+    except MailError as exc:
+        raise SystemExit(f"Email failed: {exc}")
+    finally:
+        c.close()

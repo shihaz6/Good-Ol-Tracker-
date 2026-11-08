@@ -134,9 +134,48 @@ def _load_pages(conn, urls):
     return pages
 
 
+def _manual_items(conn, start, end, desktop_spans) -> list[Item]:
+    """Offline time you logged yourself. Only the parts when the PC wasn't in use count,
+    so a lecture logged 9-11 while your laptop was open for 30 min isn't double counted."""
+    rows = conn.execute(
+        "SELECT start_ts, end_ts, category, note FROM manual_entries WHERE end_ts > ? AND start_ts < ?"
+        " ORDER BY start_ts", (start, end)).fetchall()
+    items = []
+    for s, e, cat, note in rows:
+        s, e = max(s, start), min(e, end)
+        cursor = s
+        for ds, de in desktop_spans:
+            if de <= cursor or ds >= e:
+                continue
+            if ds > cursor:
+                items.append(Item(cursor, ds, cat, "Offline", note or "Offline time", "manual", True))
+            cursor = max(cursor, de)
+            if cursor >= e:
+                break
+        if cursor < e:
+            items.append(Item(cursor, e, cat, "Offline", note or "Offline time", "manual", True))
+    return items
+
+
+def classify_search(rules: Rules, query: str, ai_category: str | None) -> str:
+    """Keywords first, then the AI's category for the query, else ''."""
+    cat = rules.classify_text([(query, 3)])
+    if cat:
+        return cat
+    return ai_category if ai_category in rules.categories else ""
+
+
 def categorise(conn, start: float, end: float, rules: Rules | None = None) -> list[Item]:
-    """All activity between start and end as categorised, non-overlapping Items."""
-    rules = rules or Rules()
+    """All activity between start and end as categorised, non-overlapping Items
+    (PC activity + offline time you logged), sorted by start."""
+    items = _categorise_pc(conn, start, end, rules or Rules())
+    spans = sorted((it.start, it.end) for it in items)
+    items += _manual_items(conn, start, end, spans)
+    return sorted(items, key=lambda it: it.start)
+
+
+def _categorise_pc(conn, start: float, end: float, rules: Rules) -> list[Item]:
+    """PC activity only (desktop sessions, split by browser visits)."""
     q = ("SELECT start_ts, end_ts, app, title, url FROM sessions"
          " WHERE source = ? AND end_ts > ? AND start_ts < ? ORDER BY start_ts")
     desktop = conn.execute(q, ("desktop", start, end)).fetchall()
