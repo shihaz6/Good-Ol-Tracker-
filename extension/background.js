@@ -167,14 +167,23 @@ async function flush(mediaPlaying) {
   // (the server updates it in place by id). Final version is queued when it closes.
   const cur = await getLocal("current", null);
   const live = cur && cur.lastSeen - cur.start >= MIN_VISIT_SECONDS ? [visitPayload(cur, cur.lastSeen)] : [];
-  if (!visits.length && !pages.length && !searches.length && !live.length && !mediaPlaying) return;
+
+  // Always sent, even with nothing queued: doubles as the dashboard's "extension is alive"
+  // heartbeat and tells it whether page scanning is on.
+  await permissionReady;
+  const client = {
+    version: chrome.runtime.getManifest().version,
+    all_sites: allSites,
+    paused: await isPaused(),
+    queued: queue.visits.length + queue.pages.length + queue.searches.length,
+  };
 
   let res;
   try {
     res = await fetch(`${SERVER}/ingest`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Tracker-Token": token },
-      body: JSON.stringify({ visits: [...visits, ...live], pages, searches, media: !!mediaPlaying }),
+      body: JSON.stringify({ visits: [...visits, ...live], pages, searches, media: !!mediaPlaying, client }),
       signal: AbortSignal.timeout(5000),
     });
   } catch {

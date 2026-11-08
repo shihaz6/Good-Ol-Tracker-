@@ -201,7 +201,13 @@ def due_week(conn, today: date | None = None):
     start = last_sunday - timedelta(days=6)
     done = conn.execute("SELECT 1 FROM summaries WHERE start_day = ? AND end_day = ?",
                         (start.isoformat(), last_sunday.isoformat())).fetchone()
-    return None if done else (start, last_sunday)
+    if done:
+        return None
+    # Skip weeks with no activity at all (e.g. before the tracker was installed).
+    lo = analytics._midnight(start)
+    hi = analytics._midnight(last_sunday + timedelta(days=1))
+    active = conn.execute("SELECT 1 FROM sessions WHERE end_ts > ? AND start_ts < ? LIMIT 1", (lo, hi)).fetchone()
+    return (start, last_sunday) if active else None
 
 
 def last_7_days(today: date | None = None):

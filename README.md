@@ -24,15 +24,36 @@ python desktop\report.py 2026-11-07
 
 Data lives in `data\`: `tracker.db` (SQLite), `tracker.log`, `token.txt` (extension key).
 
-## Background / at login
+## Background, autostart and watchdog
 
-- Autostart is set up via `Good ol Tracker.lnk` in the Startup folder
-  (Win+R -> `shell:startup`). Delete that shortcut to disable it.
-- Run hidden manually: `pythonw desktop\tracker.py`
-- Stop it: Task Manager -> end the `pythonw.exe` process.
-- After changing the Python code, stop and restart it so the changes load.
+```powershell
+powershell -ExecutionPolicy Bypass -File install_autostart.ps1              # install / update
+powershell -ExecutionPolicy Bypass -File install_autostart.ps1 -Uninstall   # remove
+```
 
-Only one tracker runs at a time; extra launches exit immediately.
+This creates a per-user scheduled task **Good ol Tracker** (no admin needed) that starts
+the tracker at login and **checks every 5 minutes, relaunching it if it has stopped**.
+Only one tracker runs at a time; extra launches exit immediately, so the watchdog never
+creates duplicates. It also never stops on battery or after a time limit.
+
+- Restart after changing Python code: end `pythonw.exe` in Task Manager, then
+  `Start-ScheduledTask "Good ol Tracker"` (or just wait up to 5 minutes).
+- Run by hand instead: `python desktop\tracker.py -v`.
+
+## Backups
+
+Once a day the tracker writes a consistent, zipped copy of the database to
+`data\backups\tracker-YYYY-MM-DD.db.zip` and keeps the newest **14**. Make one now:
+`python desktop\backup.py`.
+
+**Restore:** end `pythonw.exe`, unzip the backup's `tracker.db` over `data\tracker.db`,
+delete `data\tracker.db-wal` and `data\tracker.db-shm`, then start the tracker again.
+
+## Health
+
+The strip at the top of the dashboard shows whether the desktop tracker is sampling,
+when the extension last checked in (every 30s while Brave is open) and whether page
+scanning is on, whether the AI keys work, and when the last backup ran.
 
 ## Install the extension (Brave / Chrome / Edge)
 
@@ -134,7 +155,7 @@ rules for.
 ## Tests
 
 ```powershell
-python -m unittest discover -s tests -v   # categories, splitting, searches, dashboard numbers
+python -m unittest discover -s tests -v   # categories, searches, dashboard, AI, backups
 node tests\test_search.js                 # search detection from URLs
 node tests\test_blocklist.js              # which sites' content is never read
 ```

@@ -12,6 +12,7 @@ Endpoints:
   GET  /             -> dashboard page (desktop/dashboard/)
   GET  /api/summary?start=YYYY-MM-DD&end=YYYY-MM-DD -> dashboard data
   GET  /api/ai              -> AI status + latest weekly summary
+  GET  /api/health          -> tracker / extension / AI / backup status
   GET  /api/weekly/preview  -> exactly what a weekly summary would send to Groq
   POST /api/weekly          -> generate a summary of the last 7 days (dashboard only)
        Same-origin only: other websites can't read it (no CORS, Sec-Fetch-Site and
@@ -30,6 +31,7 @@ from urllib.parse import parse_qs
 
 import ai_categorize
 import analytics
+import backup
 import db
 import keys
 import weekly
@@ -64,11 +66,13 @@ log = logging.getLogger("tracker")
 
 
 class SharedState:
-    """Data the server hands to the tracker thread."""
+    """Data shared between the tracker loop and the server threads."""
 
     def __init__(self):
         self._lock = threading.Lock()
         self._media_until = 0.0
+        self.started = time.time()
+        self.last_tick = 0.0  # set by the desktop sampling loop every INTERVAL seconds
 
     def media_heartbeat(self, playing: bool) -> None:
         with self._lock:
@@ -169,13 +173,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "dashboard files missing"})
             return self._send_bytes(200, body, ctype, PAGE_HEADERS if name.endswith(".html") else None)
 
-        if path in ("/api/summary", "/api/ai", "/api/weekly/preview"):
+        if path in ("/api/summary", "/api/ai", "/api/weekly/preview", "/api/health"):
             if not self._dashboard_ok(api=True):
                 return self._send(403, {"error": "forbidden"})
             if path == "/api/summary":
                 return self._summary(parse_qs(query))
             if path == "/api/ai":
                 return self._ai_status()
+            if path == "/api/health":
+                return self._health()
             return self._weekly_preview()
 
         self._send(404, {"error": "not found"})
@@ -189,6 +195,27 @@ class Handler(BaseHTTPRequestHandler):
                 "categoriser": {**ai_categorize.counts(conn), **ai_categorize.status},
                 "summary": weekly.latest(conn),
                 "default_range": [d.isoformat() for d in weekly.last_7_days()],
+            }
+        finally:
+            conn.close()
+        self._send_bytes(200, json.dumps(data).encode(), "application/json")
+
+    def _health(self):
+        state = self.server.state
+        conn = db.connect()
+        try:
+            client = db.get_meta(conn, "extension_client")
+            seen = db.get_meta(conn, "extension_last_seen")
+            data = {
+                "now": time.time(),
+                "tracker": {"started": state.started, "last_tick": state.last_tick or None},
+                "extension": {"last_seen": float(seen) if seen else None,
+                              **(json.loads(client) if client else {})},
+                "ai": {"voyage_key": bool(keys.load_key("voyage")), "groq_key": bool(keys.load_key("groq")),
+                       "last_run": ai_categorize.status["last_run"],
+                       "last_error": ai_categorize.status["last_error"]},
+                "backups": backup.status(conn),
+                "db_mb": round(db.DB_PATH.stat().st_size / 1e6, 1) if db.DB_PATH.exists() else 0,
             }
         finally:
             conn.close()
@@ -275,11 +302,17 @@ def ingest(payload: dict, state: SharedState) -> dict:
     searches = payload.get("searches") or []
     if not all(isinstance(x, list) for x in (visits, pages, searches)):
         raise ValueError("visits/pages/searches must be lists")
+    client = payload.get("client")
     conn = db.connect()
     try:
         n_visits = db.insert_browser_visits(conn, visits)
         n_pages = db.upsert_pages(conn, pages)
         n_searches = db.insert_searches(conn, searches)
+        # Health check: remember when the extension last checked in and its settings.
+        db.set_meta(conn, "extension_last_seen", time.time())
+        if isinstance(client, dict):
+            info = {k: client.get(k) for k in ("version", "all_sites", "paused", "queued")}
+            db.set_meta(conn, "extension_client", json.dumps(info)[:500])
     finally:
         conn.close()
     if "media" in payload:

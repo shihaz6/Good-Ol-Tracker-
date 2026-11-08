@@ -69,6 +69,12 @@ CREATE TABLE IF NOT EXISTS prototype_vectors (
     PRIMARY KEY (text_hash, model)
 );
 
+-- Small key/value store: last backup, extension last seen, ...
+CREATE TABLE IF NOT EXISTS meta (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
+);
+
 -- Weekly AI summaries (Groq). payload = exactly what was sent.
 CREATE TABLE IF NOT EXISTS summaries (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,6 +112,16 @@ def _migrate(conn) -> None:
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_client ON sessions(client_id)"
     )
+    conn.commit()
+
+
+def get_meta(conn, key: str, default=None):
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else default
+
+
+def set_meta(conn, key: str, value) -> None:
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, str(value)))
     conn.commit()
 
 

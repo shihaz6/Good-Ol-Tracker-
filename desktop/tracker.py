@@ -17,6 +17,7 @@ import threading
 import time
 
 import ai_categorize
+import backup
 import categorize
 import db
 import keys
@@ -57,6 +58,7 @@ class Tracker:
 
     def tick(self):
         now = time.time()
+        self.state.last_tick = now  # health check: the sampling loop is alive
         idle = win32.idle_seconds()
         win = win32.active_window()
 
@@ -101,12 +103,19 @@ class Tracker:
             time.sleep(INTERVAL)
 
 
-def ai_worker() -> None:
-    """Background thread: AI categories for new pages + the automatic weekly summary.
-    Network calls live here so the 5-second desktop sampling is never delayed."""
+def background_worker() -> None:
+    """Background thread: daily backup, AI categories for new pages, weekly summary.
+    Slow work lives here so the 5-second desktop sampling is never delayed."""
     conn = db.connect()
-    last_weekly_check = 0.0
+    last_weekly_check = last_backup_check = 0.0
     while True:
+        if time.time() - last_backup_check >= 3600:
+            last_backup_check = time.time()
+            try:
+                backup.backup_if_due(conn)
+            except Exception:
+                log.exception("backup failed")
+
         try:
             result = ai_categorize.run_batch(conn, categorize.Rules())
             ai_categorize.status.update(last_run=time.time(), last_error=None)
@@ -166,7 +175,7 @@ def main():
 
     conn = db.connect()
     log.info("logging to %s", db.DB_PATH)
-    threading.Thread(target=ai_worker, name="ai-worker", daemon=True).start()
+    threading.Thread(target=background_worker, name="background", daemon=True).start()
     try:
         Tracker(conn, state).run()
     except KeyboardInterrupt:

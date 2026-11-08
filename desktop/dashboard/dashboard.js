@@ -514,6 +514,73 @@ function render(d) {
   renderRules(d);
 }
 
+// ------------------------------------------------------------------ health strip
+
+function fmtAgo(seconds) {
+  if (seconds < 90) return "just now";
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  if (seconds < 86400 * 2) return `${Math.round(seconds / 3600)}h ago`;
+  return `${Math.round(seconds / 86400)} days ago`;
+}
+
+function pill(level, label, detail, title) {
+  const p = el("span", `pill ${level}`);
+  p.append(el("span", "ico", { good: "✓", warn: "!", bad: "✕" }[level]), el("b", null, label));
+  if (detail) p.append(document.createTextNode(detail));
+  if (title) p.title = title;
+  return p;
+}
+
+async function loadHealth() {
+  let h;
+  try {
+    const res = await fetch("/api/health", { cache: "no-store" });
+    h = await res.json();
+    if (!res.ok) throw new Error();
+  } catch {
+    $("#health").replaceChildren(pill("bad", "Tracker", " not reachable"));
+    return;
+  }
+  const now = h.now;
+  const pills = [];
+
+  const tickAge = h.tracker.last_tick ? now - h.tracker.last_tick : Infinity;
+  pills.push(tickAge < 20
+    ? pill("good", "Desktop tracker", " running")
+    : pill("bad", "Desktop tracker", ` not sampling${isFinite(tickAge) ? ` (last ${fmtAgo(tickAge)})` : ""}`));
+
+  const ext = h.extension;
+  const extAge = ext.last_seen ? now - ext.last_seen : null;
+  if (extAge == null) {
+    pills.push(pill("bad", "Extension", " never connected", "Check the token in the extension's settings"));
+  } else if (extAge < 90) {
+    pills.push(pill("good", "Extension", ` connected${ext.version ? ` (v${ext.version})` : ""}`));
+  } else {
+    pills.push(pill("warn", "Extension", ` last seen ${fmtAgo(extAge)}`, "Normal if Brave is closed"));
+  }
+  if (extAge != null) {
+    if (ext.paused) pills.push(pill("warn", "Tracking", " paused in the extension"));
+    else if (ext.all_sites === false) {
+      pills.push(pill("warn", "Page scanning", " off", "Extension settings → tick 'Read page content on all sites'"));
+    } else if (ext.all_sites) pills.push(pill("good", "Page scanning", " on"));
+  }
+
+  const ai = h.ai;
+  if (ai.last_error) pills.push(pill("warn", "AI", ` ${ai.last_error}`));
+  else if (ai.voyage_key || ai.groq_key) {
+    const parts = [ai.voyage_key && "categoriser", ai.groq_key && "weekly summary"].filter(Boolean);
+    pills.push(pill("good", "AI", ` ${parts.join(" + ")} ready`));
+  }
+
+  const b = h.backups;
+  const bAge = b.last_ts ? now - b.last_ts : null;
+  if (bAge == null) pills.push(pill("warn", "Backup", " none yet"));
+  else if (bAge < 26 * 3600) pills.push(pill("good", "Backup", ` ${fmtAgo(bAge)} · ${b.count} kept (${b.total_mb} MB)`));
+  else pills.push(pill("bad", "Backup", ` last one ${fmtAgo(bAge)}`));
+
+  $("#health").replaceChildren(...pills);
+}
+
 // ------------------------------------------------------------------ AI summary
 
 // Minimal, safe Markdown: headings, bullet/numbered lists, paragraphs. Text only (no HTML).
@@ -623,6 +690,7 @@ async function load() {
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     render(data);
     loadAI();
+    loadHealth();
     $("#error").hidden = true;
     $("#updated").textContent = `Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
     if (data.range.includes_today) state.timer = setTimeout(load, REFRESH_MS);
@@ -632,6 +700,7 @@ async function load() {
       : `Couldn't load data: ${err.message}`;
     $("#error").textContent = msg;
     $("#error").hidden = false;
+    loadHealth();
     state.timer = setTimeout(load, REFRESH_MS);
   } finally {
     document.body.classList.remove("loading");

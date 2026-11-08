@@ -185,6 +185,7 @@ class WeeklyTest(unittest.TestCase):
     def test_due_week_is_last_full_mon_to_sun(self):
         wednesday = date(2026, 11, 11)
         self.assertEqual(weekly.due_week(self.conn, wednesday), (date(2026, 11, 2), date(2026, 11, 8)))
+        self.assertIsNone(weekly.due_week(memory_db(), wednesday))  # week with no activity: skipped
         self.conn.execute("INSERT INTO summaries (created_ts, start_day, end_day, model, payload, text)"
                           " VALUES (0, '2026-11-02', '2026-11-08', 'm', '{}', 't')")
         self.assertIsNone(weekly.due_week(self.conn, wednesday))
