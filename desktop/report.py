@@ -5,12 +5,14 @@
 
 Desktop sessions are the time total. Browser sessions are a breakdown of the
 time spent inside the browser, so they're shown separately (never added on top).
+Categories come from categories.json (see desktop/categorize.py).
 """
 
 import sys
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
+import categorize
 import db
 
 
@@ -42,22 +44,59 @@ def print_ranked(header, items, total, limit, width=20):
     print()
 
 
-def print_right_now():
+def print_right_now(conn, rules):
     """Live view: what each source saw most recently (desktop updates every 5s,
     the browser extension every 30s or on tab switch)."""
-    conn = db.connect()
     now = datetime.now().timestamp()
     print("\nRight now")
     for source, fresh in (("desktop", 15), ("browser", 45)):
         row = conn.execute(
-            "SELECT start_ts, end_ts, app, title FROM sessions WHERE source = ?"
+            "SELECT start_ts, end_ts, app, title, url FROM sessions WHERE source = ?"
             " ORDER BY end_ts DESC LIMIT 1", (source,)).fetchone()
-        if row and now - row[1] <= fresh:
-            start, end, app, title = row
-            print(f"  {source:<8} {app:<20} {title[:60]}  (for {fmt(end - start).strip()})")
-        else:
+        if not row or now - row[1] > fresh:
             print(f"  {source:<8} -")
-    conn.close()
+            continue
+        start, end, app, title, url = row
+        cat = ""
+        if rules:
+            if source == "browser":
+                page = categorize._load_pages(conn, [url]).get(url)
+                cat = rules.classify_browser(app, title, page)[0]
+            else:
+                cat = rules.classify_desktop(app, title)[0]
+        print(f"  {source:<8} {cat:<13} {app[:20]:<20} {title[:50]}  (for {fmt(end - start).strip()})")
+
+
+def print_categories(items, rules):
+    total = sum(it.seconds for it in items)
+    if not total:
+        return
+    by_cat = defaultdict(float)
+    unmatched = defaultdict(float)   # (kind, name) -> seconds
+    unsure = defaultdict(float)      # (site, title) -> seconds
+    for it in items:
+        by_cat[it.category] += it.seconds
+        if not it.matched:
+            unmatched[("site" if it.source == "browser" else "app", it.app)] += it.seconds
+        elif it.category == rules.fallback["content"]:
+            unsure[(it.app, it.title)] += it.seconds
+
+    print("By category")
+    for cat, secs in sorted(by_cat.items(), key=lambda kv: -kv[1]):
+        share = secs / total
+        print(f"  {fmt(secs)}  {share:5.1%}  {cat:<14} {'█' * max(1, round(share * 30))}")
+    print()
+
+    if unmatched:
+        print("Not categorised yet  (add these to \"apps\" / \"sites\" in categories.json)")
+        for (kind, name), secs in sorted(unmatched.items(), key=lambda kv: -kv[1])[:10]:
+            print(f"  {fmt(secs)}  {kind:<4}  {name}")
+        print()
+    if unsure:
+        print("Unsure  (add a channel rule or keywords in categories.json)")
+        for (site, title), secs in sorted(unsure.items(), key=lambda kv: -kv[1])[:5]:
+            print(f"  {fmt(secs)}  {site[:16]:<16} {title[:60]}")
+        print()
 
 
 def main():
@@ -66,6 +105,12 @@ def main():
     day_end = (datetime.combine(day, datetime.min.time()) + timedelta(days=1)).timestamp()
 
     conn = db.connect()
+    try:
+        rules = categorize.Rules()
+    except (OSError, ValueError) as exc:  # ValueError includes JSON syntax errors
+        print(f"\n!! categories.json problem, skipping categories: {exc}")
+        rules = None
+
     query = ("SELECT start_ts, end_ts, app, title FROM sessions"
              " WHERE source = ? AND end_ts > ? AND start_ts < ? ORDER BY start_ts")
     desktop = conn.execute(query, ("desktop", day_start, day_end)).fetchall()
@@ -75,14 +120,15 @@ def main():
         " ORDER BY scanned_ts DESC",
         (day_start, day_end),
     ).fetchall()
+    items = categorize.categorise(conn, day_start, day_end, rules) if rules else []
+
+    if day == date.today():
+        print_right_now(conn, rules)
     conn.close()
 
     if not desktop and not browser:
         print(f"No activity recorded for {day}.")
         return
-
-    if day == date.today():
-        print_right_now()
 
     if desktop:
         by_app, by_title, total = totals(desktop, day_start, day_end)
@@ -90,6 +136,8 @@ def main():
         last = datetime.fromtimestamp(min(desktop[-1][1], day_end))
         print(f"\n{day}   active {fmt(total).strip()}   {first:%H:%M} - {last:%H:%M}"
               f"   {len(desktop)} sessions / window switches\n")
+        if rules:
+            print_categories(items, rules)
         print_ranked("By app", by_app, total, 50)
         print_ranked("Top 15 windows", by_title, total, 15)
 

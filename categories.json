@@ -1,0 +1,186 @@
+{
+  "_help": [
+    "Edit freely; changes apply to ALL past data the next time you run the report.",
+    "apps:     exe name (case-insensitive) -> category. Find names in the report's 'Not categorised yet' list.",
+    "sites:    domain -> category, or \"content\" to decide from the page (title/description/channel).",
+    "          A rule also covers subdomains: \"google.com\" matches docs.google.com unless docs.google.com has its own rule.",
+    "channels: YouTube channel / article author -> category (checked before keywords).",
+    "keywords: words or phrases that vote for a category; whole words, case-insensitive.",
+    "fallback: what unmatched things become. 'app'/'site' fallbacks show up in 'Not categorised yet'."
+  ],
+
+  "categories": ["Coding", "Study", "Work", "Communication", "Entertainment", "Social", "Browsing", "Unsure", "Other"],
+
+  "fallback": { "app": "Other", "site": "Browsing", "content": "Unsure" },
+
+  "apps": {
+    "Code.exe": "Coding",
+    "Cursor.exe": "Coding",
+    "devenv.exe": "Coding",
+    "idea64.exe": "Coding",
+    "pycharm64.exe": "Coding",
+    "studio64.exe": "Coding",
+    "eclipse.exe": "Coding",
+    "sublime_text.exe": "Coding",
+    "notepad++.exe": "Coding",
+    "WindowsTerminal.exe": "Coding",
+    "cmd.exe": "Coding",
+    "powershell.exe": "Coding",
+    "pwsh.exe": "Coding",
+    "python.exe": "Coding",
+    "node.exe": "Coding",
+    "GitHubDesktop.exe": "Coding",
+    "Postman.exe": "Coding",
+    "Docker Desktop.exe": "Coding",
+    "MySQLWorkbench.exe": "Coding",
+    "Ssms.exe": "Coding",
+    "dbeaver.exe": "Coding",
+    "DB Browser for SQLite.exe": "Coding",
+
+    "WINWORD.EXE": "Work",
+    "EXCEL.EXE": "Work",
+    "POWERPNT.EXE": "Work",
+    "ONENOTE.EXE": "Work",
+    "Acrobat.exe": "Work",
+    "AcroRd32.exe": "Work",
+    "SumatraPDF.exe": "Work",
+    "Notion.exe": "Work",
+    "Obsidian.exe": "Work",
+    "Figma.exe": "Work",
+
+    "Teams.exe": "Communication",
+    "ms-teams.exe": "Communication",
+    "Zoom.exe": "Communication",
+    "Slack.exe": "Communication",
+    "Discord.exe": "Communication",
+    "WhatsApp.exe": "Communication",
+    "WhatsApp.Root.exe": "Communication",
+    "Telegram.exe": "Communication",
+    "OUTLOOK.EXE": "Communication",
+    "olk.exe": "Communication",
+
+    "Spotify.exe": "Entertainment",
+    "vlc.exe": "Entertainment",
+    "steam.exe": "Entertainment",
+    "steamwebhelper.exe": "Entertainment",
+    "EpicGamesLauncher.exe": "Entertainment",
+
+    "explorer.exe": "Other",
+    "Taskmgr.exe": "Other",
+    "SystemSettings.exe": "Other",
+    "OpenWith.exe": "Other",
+    "SearchHost.exe": "Other",
+    "ShellExperienceHost.exe": "Other",
+    "ApplicationFrameHost.exe": "Other",
+    "Notepad.exe": "Other"
+  },
+
+  "sites": {
+    "github.com": "Coding",
+    "gitlab.com": "Coding",
+    "stackoverflow.com": "Coding",
+    "stackexchange.com": "Coding",
+    "developer.mozilla.org": "Coding",
+    "docs.python.org": "Coding",
+    "npmjs.com": "Coding",
+    "pypi.org": "Coding",
+    "localhost": "Coding",
+    "leetcode.com": "Coding",
+    "hackerrank.com": "Coding",
+
+    "coursera.org": "Study",
+    "udemy.com": "Study",
+    "edx.org": "Study",
+    "khanacademy.org": "Study",
+    "w3schools.com": "Study",
+    "geeksforgeeks.org": "Study",
+    "programiz.com": "Study",
+    "quizlet.com": "Study",
+    "scholar.google.com": "Study",
+    "wikipedia.org": "Study",
+    "overleaf.com": "Study",
+
+    "docs.google.com": "Work",
+    "drive.google.com": "Work",
+    "calendar.google.com": "Work",
+    "office.com": "Work",
+    "onedrive.live.com": "Work",
+    "notion.so": "Work",
+    "figma.com": "Work",
+    "canva.com": "Work",
+    "trello.com": "Work",
+
+    "mail.google.com": "Communication",
+    "outlook.live.com": "Communication",
+    "outlook.office.com": "Communication",
+    "web.whatsapp.com": "Communication",
+    "discord.com": "Communication",
+    "teams.microsoft.com": "Communication",
+    "meet.google.com": "Communication",
+    "zoom.us": "Communication",
+    "messenger.com": "Communication",
+    "web.telegram.org": "Communication",
+    "slack.com": "Communication",
+
+    "linkedin.com": "Social",
+    "facebook.com": "Social",
+    "instagram.com": "Social",
+    "x.com": "Social",
+    "twitter.com": "Social",
+    "tiktok.com": "Social",
+    "threads.net": "Social",
+    "pinterest.com": "Social",
+
+    "netflix.com": "Entertainment",
+    "primevideo.com": "Entertainment",
+    "disneyplus.com": "Entertainment",
+    "twitch.tv": "Entertainment",
+    "open.spotify.com": "Entertainment",
+    "music.youtube.com": "Entertainment",
+
+    "youtube.com": "content",
+    "medium.com": "content",
+    "reddit.com": "content",
+    "google.com": "content",
+    "claude.ai": "content",
+    "chatgpt.com": "content",
+    "gemini.google.com": "content"
+  },
+
+  "channels": {
+    "freeCodeCamp.org": "Study",
+    "Bro Code": "Study",
+    "Programming with Mosh": "Study",
+    "Neso Academy": "Study",
+    "Abdul Bari": "Study",
+    "CS50": "Study",
+    "Khan Academy": "Study",
+    "Fireship": "Coding"
+  },
+
+  "keywords": {
+    "Study": [
+      "lecture", "tutorial", "course", "full course", "crash course", "lesson", "explained",
+      "exam", "assignment", "lab", "revision", "past paper", "syllabus", "quiz", "module",
+      "semester", "university", "learn", "beginners", "for beginners", "how to",
+      "algorithm", "algorithms", "data structures", "database", "dbms", "sql", "normalization",
+      "oop", "object oriented", "java", "python", "c++", "javascript",
+      "mathematics", "math", "calculus", "statistics", "discrete", "physics", "networking"
+    ],
+    "Coding": [
+      "code", "coding", "debug", "bug", "error", "exception", "stack trace", "api",
+      "deploy", "repo", "repository", "git", "github", "commit", "pull request",
+      "extension", "script", "compile", "localhost", "npm", "pip", "docker"
+    ],
+    "Work": [
+      "meeting", "report", "proposal", "invoice", "budget", "presentation",
+      "resume", "cv", "cover letter", "internship", "job"
+    ],
+    "Entertainment": [
+      "gameplay", "gaming", "funny", "gta", "minecraft", "fortnite", "valorant", "pubg",
+      "music video", "official video", "official audio", "lyrics", "song", "trailer",
+      "movie", "full movie", "episode", "highlights", "meme", "memes", "prank",
+      "reaction", "vlog", "comedy", "anime", "football", "cricket"
+    ]
+  }
+}

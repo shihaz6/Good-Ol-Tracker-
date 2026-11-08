@@ -7,6 +7,9 @@ Local-only activity tracker. Nothing leaves this PC.
   and page scanning on a small allowlist. Talks to a server inside the desktop tracker
   on `127.0.0.1:47321`.
 
+- **Step 3 - categories** (`categories.json`, `desktop/categorize.py`): Coding, Study,
+  Work, ... by app, site, YouTube channel and page keywords.
+
 No dependencies: Python stdlib only.
 
 ## Run
@@ -50,6 +53,23 @@ Page content is read **only** on YouTube videos, Medium articles and Reddit thre
 password field. Google searches store just the search text from the URL. Incognito
 is never tracked. To scan another site, add it to `SCAN_RULES` in
 `extension/background.js` **and** to `host_permissions` in `extension/manifest.json`.
+
+## Categories
+
+Rules live in `categories.json` at the project root. Categories are worked out when
+data is read, so **editing the rules re-categorises all past data** - just re-run the report.
+
+How something gets its category:
+
+1. **Desktop app** -> `apps` rule (e.g. `Code.exe` -> Coding).
+2. **Browser in front** -> the time is split by the tabs the extension saw, then per site:
+   - `sites` rule (covers subdomains; most specific wins), or
+   - `"content"` sites (YouTube, Reddit, Google, Claude...) -> `channels` rule, else
+     `keywords` scored over the scanned page (title counts most); no clear winner = **Unsure**.
+3. Nothing matched -> keywords on the window/tab title, else `Other` (apps) / `Browsing` (sites).
+
+The report lists **Not categorised yet** and **Unsure** items, the things worth adding
+rules for. Tests: `python -m unittest discover -s tests -v`
 
 ## Settings
 
