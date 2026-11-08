@@ -7,8 +7,12 @@ Security:
   * Host header must be 127.0.0.1/localhost (blocks DNS-rebinding tricks)
 
 Endpoints:
-  GET  /health  -> {"ok": true}            (used by the extension's options page)
-  POST /ingest  -> {"visits": [...], "pages": [...], "searches": [...], "media": bool}
+  GET  /health       -> {"ok": true}            (extension options page; needs token)
+  POST /ingest       -> {"visits": [...], "pages": [...], "searches": [...], "media": bool}
+  GET  /             -> dashboard page (desktop/dashboard/)
+  GET  /api/summary?start=YYYY-MM-DD&end=YYYY-MM-DD -> dashboard data
+       Same-origin only: other websites can't read it (no CORS, Sec-Fetch-Site and
+       Origin checks, Host check against DNS rebinding).
 """
 
 import json
@@ -16,15 +20,39 @@ import logging
 import secrets
 import threading
 import time
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs
 
+import analytics
 import db
 
 PORT = 47321
 MEDIA_GRACE = 75          # a "media playing" heartbeat counts for this many seconds
 MAX_BODY = 2_000_000      # bytes
+MAX_RANGE_DAYS = 366
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
+SAME_ORIGINS = {f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"}
 EXTENSION_ORIGINS = ("chrome-extension://",)
+
+DASHBOARD_DIR = Path(__file__).resolve().parent / "dashboard"
+STATIC = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/dashboard.css": ("dashboard.css", "text/css; charset=utf-8"),
+    "/dashboard.js": ("dashboard.js", "text/javascript; charset=utf-8"),
+}
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "no-store",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Referrer-Policy": "no-referrer",
+}
+PAGE_HEADERS = {
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; "
+                               "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
+    "X-Frame-Options": "DENY",
+}
 
 log = logging.getLogger("tracker")
 
@@ -79,6 +107,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        for k, v in SECURITY_HEADERS.items():
+            self.send_header(k, v)
         origin = self.headers.get("Origin")
         if origin and origin.startswith(EXTENSION_ORIGINS):
             self.send_header("Access-Control-Allow-Origin", origin)
@@ -98,12 +128,68 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Tracker-Token")
         self.end_headers()
 
+    def _send_bytes(self, code: int, body: bytes, content_type: str, extra=None) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        for k, v in {**SECURITY_HEADERS, **(extra or {})}.items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _dashboard_ok(self, api: bool) -> bool:
+        if self.headers.get("Host") not in ALLOWED_HOSTS:
+            return False
+        origin = self.headers.get("Origin")
+        if origin is not None and origin not in SAME_ORIGINS:
+            return False
+        # Data requests must come from the dashboard itself (or be typed in directly).
+        return not api or self.headers.get("Sec-Fetch-Site", "same-origin") in ("same-origin", "none")
+
     def do_GET(self):
-        if self.path != "/health":
-            return self._send(404, {"error": "not found"})
-        if not self._authorized():
-            return self._send(401, {"error": "unauthorized"})
-        self._send(200, {"ok": True})
+        path, _, query = self.path.partition("?")
+        if path == "/health":
+            if not self._authorized():
+                return self._send(401, {"error": "unauthorized"})
+            return self._send(200, {"ok": True})
+
+        if path in STATIC:
+            if not self._dashboard_ok(api=False):
+                return self._send(403, {"error": "forbidden"})
+            name, ctype = STATIC[path]
+            try:
+                body = (DASHBOARD_DIR / name).read_bytes()
+            except OSError:
+                return self._send(404, {"error": "dashboard files missing"})
+            return self._send_bytes(200, body, ctype, PAGE_HEADERS if name.endswith(".html") else None)
+
+        if path == "/api/summary":
+            if not self._dashboard_ok(api=True):
+                return self._send(403, {"error": "forbidden"})
+            return self._summary(parse_qs(query))
+
+        self._send(404, {"error": "not found"})
+
+    def _summary(self, params):
+        try:
+            today = date.today()
+            start = date.fromisoformat(params.get("start", [today.isoformat()])[0])
+            end = date.fromisoformat(params.get("end", [start.isoformat()])[0])
+            if end < start:
+                start, end = end, start
+            if (end - start).days >= MAX_RANGE_DAYS:
+                start = end - timedelta(days=MAX_RANGE_DAYS - 1)
+        except ValueError:
+            return self._send(400, {"error": "start/end must be YYYY-MM-DD"})
+        conn = db.connect()
+        try:
+            data = analytics.summary(conn, start, end)
+        except ValueError as exc:  # e.g. a typo in categories.json
+            log.warning("summary failed: %r", exc)
+            return self._send(500, {"error": f"categories.json: {exc}"})
+        finally:
+            conn.close()
+        self._send_bytes(200, json.dumps(data).encode(), "application/json")
 
     def do_POST(self):
         if self.path != "/ingest":

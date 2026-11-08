@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Good ol Tracker</title>
+  <link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Good ol Tracker</h1>
+      <p id="now" class="now" aria-live="polite"></p>
+    </div>
+    <button id="theme" class="ghost" type="button">Theme: system</button>
+  </header>
+
+  <nav class="filters" aria-label="Date range">
+    <div class="seg" role="group" aria-label="Range">
+      <button type="button" data-range="today">Today</button>
+      <button type="button" data-range="yesterday">Yesterday</button>
+      <button type="button" data-range="7">Last 7 days</button>
+      <button type="button" data-range="30">Last 30 days</button>
+    </div>
+    <label class="day">Day <input type="date" id="day"></label>
+    <span id="updated" class="muted"></span>
+  </nav>
+
+  <main>
+    <p id="error" class="error" role="alert" hidden></p>
+
+    <section class="tiles" id="tiles" aria-label="Summary"></section>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Time by category</h2>
+        <p class="sub" id="cats-sub"></p>
+        <div id="cats"></div>
+        <details><summary>Show as table</summary><div id="cats-table"></div></details>
+      </section>
+
+      <section class="card">
+        <h2>When you're productive</h2>
+        <p class="sub" id="hours-sub"></p>
+        <div class="legend" id="hours-legend"></div>
+        <div id="hours"></div>
+        <details><summary>Show as table</summary><div id="hours-table"></div></details>
+      </section>
+
+      <section class="card wide" id="days-card">
+        <h2>Day by day</h2>
+        <p class="sub">Active time per day, by category</p>
+        <div class="legend" id="days-legend"></div>
+        <div id="days"></div>
+        <details><summary>Show as table</summary><div id="days-table"></div></details>
+      </section>
+
+      <section class="card wide">
+        <h2>Your day, block by block</h2>
+        <p class="sub">Each block is a stretch of one category; hover for what it was</p>
+        <div class="legend" id="timeline-legend"></div>
+        <div id="timeline"></div>
+        <details><summary>Show as table</summary><div id="timeline-table"></div></details>
+      </section>
+
+      <section class="card">
+        <h2>Top apps and sites</h2>
+        <div id="apps"></div>
+      </section>
+
+      <section class="card">
+        <h2>Top topics</h2>
+        <p class="sub">From your searches and the titles of pages you read</p>
+        <div id="topics"></div>
+      </section>
+
+      <section class="card wide">
+        <h2>Pages read</h2>
+        <p class="sub">Read = how far down the page you scrolled</p>
+        <div id="pages"></div>
+      </section>
+
+      <section class="card wide">
+        <h2>Searches</h2>
+        <div id="searches"></div>
+      </section>
+
+      <section class="card wide" id="rules-card">
+        <h2>Needs a rule</h2>
+        <p class="sub">Add these to <code>categories.json</code> to sharpen your categories</p>
+        <div id="rules"></div>
+      </section>
+    </div>
+  </main>
+
+  <div id="tip" class="tip" role="tooltip" hidden></div>
+  <script src="/dashboard.js"></script>
+</body>
+</html>

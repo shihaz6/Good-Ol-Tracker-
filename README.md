@@ -9,6 +9,8 @@ Local-only activity tracker. Nothing leaves this PC.
 
 - **Step 3 - categories** (`categories.json`, `desktop/categorize.py`): Coding, Study,
   Work, ... by app, site, YouTube channel and page keywords.
+- **Step 4 - dashboard** (`desktop/analytics.py`, `desktop/dashboard/`): served by the
+  tracker at http://127.0.0.1:47321/.
 
 No dependencies: Python stdlib only.
 
@@ -74,6 +76,25 @@ page has a **Pause** switch that stops all recording.
 (`sessions.scroll_pct`, 0-100), shown as *read %* in the report's top pages.
 Pages that scroll inside a box instead of the whole window (e.g. Gmail) report less.
 
+## Dashboard
+
+Open **http://127.0.0.1:47321/** while the tracker runs (or click **Open dashboard** in
+the extension popup). Bookmark it. Ranges: today, yesterday, last 7/30 days, or any day.
+Today's view refreshes every 30 seconds.
+
+- **Tiles:** productive time, active time, longest focus streak, deep-focus sessions
+  (25 min+), app/site switches per hour.
+- **Time by category**, **when you're productive** (by hour of day), **day by day**
+  (multi-day ranges), and **your day block by block** (hover a block to see what it was).
+- **Top apps and sites**, **top topics** (from searches + pages you read 30s+),
+  **pages read** (with scroll depth), **searches**, and **needs a rule**.
+- Every chart has a *Show as table* view. Light/dark follows the system; the
+  *Theme* button overrides it.
+
+What counts as productive is the `"productive"` list in `categories.json`. Focus
+streaks tolerate interruptions up to 2 minutes (`FOCUS_GAP` in `desktop/analytics.py`).
+The dashboard loads nothing from the internet, and other websites can't read its data.
+
 ## Categories
 
 Rules live in `categories.json` at the project root. Categories are worked out when
@@ -94,7 +115,7 @@ rules for.
 ## Tests
 
 ```powershell
-python -m unittest discover -s tests -v   # categories, splitting, searches table
+python -m unittest discover -s tests -v   # categories, splitting, searches, dashboard numbers
 node tests\test_search.js                 # search detection from URLs
 node tests\test_blocklist.js              # which sites' content is never read
 ```

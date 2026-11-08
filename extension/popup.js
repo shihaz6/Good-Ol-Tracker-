@@ -46,5 +46,6 @@ $("paused").addEventListener("change", async () => {
   await chrome.storage.local.set({ paused: $("paused").checked });
   render();
 });
+$("openDashboard").addEventListener("click", () => chrome.tabs.create({ url: "http://127.0.0.1:47321/" }));
 $("openOptions").addEventListener("click", (e) => { e.preventDefault(); chrome.runtime.openOptionsPage(); });
 render();

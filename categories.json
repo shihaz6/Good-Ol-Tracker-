@@ -6,10 +6,14 @@
     "          A rule also covers subdomains: \"google.com\" matches docs.google.com unless docs.google.com has its own rule.",
     "channels: YouTube channel / article author -> category (checked before keywords).",
     "keywords: words or phrases that vote for a category; whole words, case-insensitive.",
-    "fallback: what unmatched things become. 'app'/'site' fallbacks show up in 'Not categorised yet'."
+    "fallback: what unmatched things become. 'app'/'site' fallbacks show up in 'Not categorised yet'.",
+    "productive: categories that count as productive time and focus in the dashboard.",
+    "Order of 'categories' = order (and colour) in the dashboard; keep Unsure and Other last."
   ],
 
   "categories": ["Coding", "Study", "Work", "Communication", "Entertainment", "Social", "Browsing", "Unsure", "Other"],
+
+  "productive": ["Coding", "Study", "Work"],
 
   "fallback": { "app": "Other", "site": "Browsing", "content": "Unsure" },
 
@@ -85,6 +89,7 @@
     "npmjs.com": "Coding",
     "pypi.org": "Coding",
     "localhost": "Coding",
+    "127.0.0.1": "Other",
     "leetcode.com": "Coding",
     "hackerrank.com": "Coding",
 

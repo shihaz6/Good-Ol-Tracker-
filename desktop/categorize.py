@@ -33,6 +33,7 @@ class Item:
     title: str
     source: str     # 'desktop' | 'browser'
     matched: bool   # False = no rule matched; shown in "Not categorised yet"
+    url: str | None = None  # browser time only
 
     @property
     def seconds(self) -> float:
@@ -43,6 +44,7 @@ class Rules:
     def __init__(self, path: Path = RULES_PATH):
         raw = json.loads(path.read_text(encoding="utf-8"))
         self.categories = list(raw["categories"])
+        self.productive = set(raw.get("productive", ["Coding", "Study", "Work"]))
         self.fallback = {"app": "Other", "site": "Browsing", "content": "Unsure",
                          **raw.get("fallback", {})}
         self.apps = {k.lower(): v for k, v in raw.get("apps", {}).items()}
@@ -53,7 +55,7 @@ class Rules:
             for cat, words in raw.get("keywords", {}).items() if words
         }
         used = [*self.apps.values(), *self.sites.values(), *self.channels.values(),
-                *self.keywords, *self.fallback.values()]
+                *self.keywords, *self.fallback.values(), *self.productive]
         unknown = sorted({c for c in used if c not in self.categories and c != CONTENT})
         if unknown:
             raise ValueError(f"categories.json uses categories not in the list: {unknown}")
@@ -138,7 +140,7 @@ def categorise(conn, start: float, end: float, rules: Rules | None = None) -> li
     visits = []
     for s, e, domain, title, url in browser_rows:
         cat, matched = rules.classify_browser(domain, title, pages.get(url))
-        visits.append(Item(s, e, cat, domain, title, "browser", matched))
+        visits.append(Item(s, e, cat, domain, title, "browser", matched, url))
 
     items, i = [], 0
     for s, e, app, title, _ in desktop:
@@ -163,7 +165,7 @@ def categorise(conn, start: float, end: float, rules: Rules | None = None) -> li
                 continue
             if os_ > cursor:
                 items.append(_browser_gap(rules, cursor, os_, app, title))
-            items.append(Item(os_, oe, v.category, v.app, v.title, "browser", v.matched))
+            items.append(Item(os_, oe, v.category, v.app, v.title, "browser", v.matched, v.url))
             cursor = oe
         if cursor < e:
             # No extension data (new tab page, settings, incognito, extension off).
