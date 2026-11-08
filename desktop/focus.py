@@ -151,6 +151,41 @@ def record_blocks(conn, items) -> int:
     return len(rows)
 
 
+def phone_block(conn, rules=None, now=None) -> list:
+    """Android packages the phone app blocks during focus: every phone app your rules (or
+    its name's keywords) put in the blocked categories, Entertainment and Social by default."""
+    rules = rules or categorize.Rules()
+    now = now or time.time()
+    pkgs = {p for p, c in rules.phone_apps.items() if c in DEFAULT_BLOCK_CATEGORIES}
+    for pkg, label in conn.execute(
+            "SELECT lower(app), MAX(title) FROM sessions WHERE source = 'phone' AND end_ts > ? GROUP BY lower(app)",
+            (now - 60 * 86400,)):
+        if pkg not in rules.phone_apps and rules.classify_phone(pkg, label or "")[0] in DEFAULT_BLOCK_CATEGORIES:
+            pkgs.add(pkg)
+    return sorted(pkgs - set(categorize.IGNORED_PHONE_APPS))
+
+
+def record_phone_blocks(conn, items) -> int:
+    """items from the phone app: [{id, ts, app}] = a blocked app was opened during focus."""
+    rows = []
+    for it in items if isinstance(items, list) else []:
+        try:
+            ts = float(it["ts"]) / 1000
+            app = str(it["app"])[:60].strip()
+            if not app:
+                continue
+            row = conn.execute(
+                "SELECT id FROM focus_sessions WHERE start_ts <= ? AND COALESCE(end_ts, planned_end_ts) >= ?"
+                " ORDER BY id DESC LIMIT 1", (ts + 5, ts - 5)).fetchone()
+            if row:
+                rows.append((row[0], ts, f"{app} (phone)", "phone:" + str(it["id"])[:60]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    conn.executemany("INSERT OR IGNORE INTO focus_blocks (focus_id, ts, domain, client_id) VALUES (?, ?, ?, ?)", rows)
+    conn.commit()
+    return len(rows)
+
+
 def history(conn, start_ts: float, end_ts: float, rules=None, now=None) -> dict:
     """Sessions that started in [start_ts, end_ts) with how they went."""
     now = now or time.time()

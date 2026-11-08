@@ -1,6 +1,10 @@
 package com.goodol.tracker
 
+import android.Manifest
 import android.annotation.SuppressLint
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import kotlinx.coroutines.delay
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -16,6 +20,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -196,6 +201,36 @@ fun Screen(resumeTick: Int) {
                 }
             }
 
+            // Focus mode
+            FocusCard(tick) { tick++ }
+
+            // Blocking + alerts setup
+            val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { tick++ }
+            val blocking = Focus.blockingEnabled(ctx)
+            val notify = Focus.canNotify(ctx)
+            StepCard("★", "Blocking and alerts", done = blocking && notify) {
+                if (blocking) Text("App blocking is on. Distracting apps close during focus sessions.")
+                else {
+                    Text("To block apps during focus, switch on \"Good ol Tracker focus mode\" in Accessibility. " +
+                        "It only sees which app is open, never what's on the screen.")
+                    Spacer(Modifier.height(4.dp))
+                    Text("If Android says it's restricted: App info → ⋮ (top right) → Allow restricted settings, then try again.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("Open Accessibility") }
+                        OutlinedButton(onClick = {
+                            ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}")))
+                        }) { Text("App info") }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                if (notify) Text("Distraction alerts can show here (\"25 min on Instagram\").")
+                else OutlinedButton(onClick = {
+                    if (Build.VERSION.SDK_INT >= 33) notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }) { Text("Allow alert notifications") }
+            }
+
             // 3. Keep it running (Xiaomi kills background apps)
             if (isXiaomi() || !battery) {
                 StepCard("3", "Keep it running", done = battery) {
@@ -232,6 +267,69 @@ fun Screen(resumeTick: Int) {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun FocusCard(tick: Int, onChange: () -> Unit) {
+    val ctx = LocalContext.current
+    val prefs = remember { Prefs(ctx) }
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var msg by remember { mutableStateOf<String?>(null) }
+    var left by remember { mutableStateOf(0L) }
+    var armed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(tick) {
+        while (true) {
+            left = (prefs.focusEndSec - System.currentTimeMillis() / 1000.0).toLong()
+            if (left <= 0) break
+            delay(1000)
+        }
+    }
+    LaunchedEffect(armed) { if (armed) { delay(4000); armed = false } }
+
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
+        containerColor = if (left > 0) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant)) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Focus mode", fontWeight = FontWeight.SemiBold)
+            if (left > 0) {
+                val h = left / 3600; val m = (left % 3600) / 60; val s = left % 60
+                Text(if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s),
+                    fontSize = 40.sp, fontWeight = FontWeight.SemiBold)
+                Text(buildString {
+                    append("left")
+                    if (prefs.focusLabel.isNotBlank()) append(" · ${prefs.focusLabel}")
+                    if (prefs.focusLocal) append(" · phone only")
+                }, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                TextButton(enabled = !busy, onClick = {
+                    if (!armed) { armed = true; return@TextButton }
+                    busy = true
+                    scope.launch {
+                        msg = withContext(Dispatchers.IO) { Focus.stop(ctx) }
+                        busy = false; armed = false; onChange()
+                    }
+                }) { Text(if (armed) "Sure? Tap again to end it" else "End early") }
+            } else {
+                Text("Blocks Facebook, Instagram, YouTube and your other distracting apps here, and distracting sites on the PC.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(25, 50, 90).forEach { mins ->
+                        OutlinedButton(enabled = !busy, modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp), onClick = {
+                            busy = true
+                            scope.launch {
+                                msg = withContext(Dispatchers.IO) { Focus.start(ctx, mins) }
+                                busy = false; onChange()
+                            }
+                        }) { Text("$mins min", maxLines = 1) }
+                    }
+                }
+            }
+            msg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
 }

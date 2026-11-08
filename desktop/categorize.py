@@ -20,6 +20,10 @@ RULES_PATH = Path(__file__).resolve().parent.parent / "categories.json"
 BROWSERS = {"brave.exe", "chrome.exe", "msedge.exe"}
 CONTENT = "content"
 ADULT_CATEGORY = "Entertainment"  # adult sites (extension/adult.js) without a rule of their own
+# Phone screens that sit in front without you using the phone: the clock/alarm screen left
+# on, Xiaomi's App vault (swipe-left page), the share sheet. Not counted (data is kept).
+IGNORED_PHONE_APPS = {"com.android.deskclock", "com.google.android.deskclock", "com.mi.globalminusscreen",
+                      "com.android.intentresolver"}
 
 # How much a keyword hit in each page field counts. The title says the most.
 FIELD_WEIGHTS = (("title", 3), ("author", 2), ("description", 1), ("headings", 1), ("body", 0.5))
@@ -227,7 +231,7 @@ def _phone_items(conn, start, end, rules) -> list[Item]:
     items = []
     for s, e, pkg, label in rows:
         s, e = max(s, start), min(e, end)
-        if e > s:
+        if e > s and pkg.lower() not in IGNORED_PHONE_APPS:
             cat, matched = rules.classify_phone(pkg, label)
             items.append(Item(s, e, cat, label or pkg, pkg, "phone", matched))
     return items

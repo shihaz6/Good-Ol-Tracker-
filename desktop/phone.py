@@ -31,8 +31,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 import db
+import focus
+import nudge
 
-log = logging.getLogger("tracker")
+log =logging.getLogger("tracker")
 
 PHONE_PORT = 47323
 DISCOVERY_PORT = 47324
@@ -217,10 +219,37 @@ def sync(conn, dev_id: str, body: dict, now=None) -> dict:
             u_rows.append((dev_id, ts))
     conn.executemany("INSERT OR IGNORE INTO phone_unlocks (device, ts) VALUES (?, ?)", u_rows)
     conn.commit()
+    focus.record_phone_blocks(conn, body.get("focus_blocks") or [])
     client = body.get("client") if isinstance(body.get("client"), dict) else {}
     _touch(dev_id, last_sync=now, version=str(client.get("version", ""))[:20],
            behind=client.get("behind") if isinstance(client.get("behind"), (int, float)) else None)
-    return {"ok": True, "sessions": len(rows), "unlocks": len(u_rows)}
+    return {"ok": True, "sessions": len(rows), "unlocks": len(u_rows), **state_for_phone(conn, now)}
+
+
+def state_for_phone(conn, now=None) -> dict:
+    """What the phone needs back on every sync: the running focus session (if any), which
+    apps to block during it, and a distraction alert to show (if it's for the phone)."""
+    now = now or time.time()
+    cur = focus.current(conn, now)
+    return {"focus": {k: cur[k] for k in ("id", "start", "end", "label")} if cur else None,
+            "phone_block": focus.phone_block(conn, now=now),
+            "nudge": nudge.take("phone")}
+
+
+def focus_action(conn, body: dict, now=None) -> dict:
+    """The phone's Start focus / End early buttons (and the alert's Start focus button)."""
+    action = body.get("action")
+    if action == "start":
+        focus.start(conn, body.get("minutes") or 25, str(body.get("label") or "")[:100], now=now)
+        log.info("focus session started from the phone")
+    elif action == "stop":
+        result = focus.stop(conn, now=now)
+        log.info("focus session ended from the phone: %s", result)
+    elif action == "snooze":  # distraction alert's Snooze button
+        nudge.snooze(body.get("minutes"), now=now)
+    elif action != "status":
+        raise PhoneError("action must be start, stop, snooze or status")
+    return {"ok": True, **state_for_phone(conn, now)}
 
 
 # --------------------------------------------------------------------- network
@@ -302,6 +331,16 @@ class PhoneHandler(BaseHTTPRequestHandler):
                     conn.close()
                 _touch(dev_id, last_ip=self._ip())
                 return self._send(200, result)
+            if self.path == "/phone/focus":
+                dev_id, _ = _device_for_token(self.headers.get("X-Phone-Token", ""))
+                if not dev_id:
+                    return self._send(401, {"error": "not paired"})
+                body = self._body()
+                conn = db.connect()
+                try:
+                    return self._send(200, focus_action(conn, body))
+                finally:
+                    conn.close()
         except (PhoneError, ValueError, TypeError) as exc:
             return self._send(400, {"error": str(exc) or "bad request"})
         self._send(404, {"error": "not found"})

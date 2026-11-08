@@ -46,6 +46,9 @@ object Usage {
         return launchers.toSet() + setOf(
             context.packageName, "android", "com.android.systemui", "com.miui.home",
             "com.mi.android.globallauncher", "com.android.permissioncontroller",
+            // Screens that stay in front without real use: clock/alarm, Xiaomi App vault, share sheet.
+            "com.android.deskclock", "com.google.android.deskclock", "com.mi.globalminusscreen",
+            "com.android.intentresolver",
         )
     }
 

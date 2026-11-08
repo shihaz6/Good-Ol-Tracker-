@@ -45,6 +45,57 @@ class Prefs(context: Context) {
 
     val paired get() = !token.isNullOrEmpty()
 
+    // ---- focus mode (state comes from the PC on every sync; "local" = started while the PC
+    // was unreachable, only blocks on the phone)
+    var focusId: Long
+        get() = p.getLong("focus_id", 0L)
+        set(v) = p.edit().putLong("focus_id", v).apply()
+    var focusStartSec: Double
+        get() = java.lang.Double.longBitsToDouble(p.getLong("focus_start", 0L))
+        set(v) = p.edit().putLong("focus_start", java.lang.Double.doubleToRawLongBits(v)).apply()
+    var focusEndSec: Double
+        get() = java.lang.Double.longBitsToDouble(p.getLong("focus_end", 0L))
+        set(v) = p.edit().putLong("focus_end", java.lang.Double.doubleToRawLongBits(v)).apply()
+    var focusLabel: String
+        get() = p.getString("focus_label", "") ?: ""
+        set(v) = p.edit().putString("focus_label", v).apply()
+    var focusLocal: Boolean
+        get() = p.getBoolean("focus_local", false)
+        set(v) = p.edit().putBoolean("focus_local", v).apply()
+
+    val focusActive get() = focusEndSec > System.currentTimeMillis() / 1000.0
+
+    fun setFocus(id: Long, start: Double, end: Double, label: String, local: Boolean) {
+        p.edit().putLong("focus_id", id)
+            .putLong("focus_start", java.lang.Double.doubleToRawLongBits(start))
+            .putLong("focus_end", java.lang.Double.doubleToRawLongBits(end))
+            .putString("focus_label", label).putBoolean("focus_local", local).apply()
+    }
+
+    fun clearFocus() = setFocus(0L, 0.0, 0.0, "", false)
+
+    /** Packages to block during focus (from the PC; defaults until the first sync). */
+    var blocked: Set<String>
+        get() = p.getStringSet("blocked", null) ?: DEFAULT_BLOCKED
+        set(v) = p.edit().putStringSet("blocked", v).apply()
+
+    /** Blocked-app attempts not yet reported to the PC, as a JSON array string. */
+    var pendingBlocks: String
+        get() = p.getString("pending_blocks", "[]") ?: "[]"
+        set(v) = p.edit().putString("pending_blocks", v).apply()
+
+    var lastNudgeId: Long
+        get() = p.getLong("last_nudge", 0L)
+        set(v) = p.edit().putLong("last_nudge", v).apply()
+
+    companion object {
+        val DEFAULT_BLOCKED = setOf(
+            "com.facebook.katana", "com.facebook.lite", "com.instagram.android", "com.zhiliaoapp.musically",
+            "com.ss.android.ugc.trill", "com.twitter.android", "com.snapchat.android", "com.reddit.frontpage",
+            "com.google.android.youtube", "com.netflix.mediaclient",
+        )
+    }
+
     fun forget() {
         p.edit().remove("token").remove("pc_id").remove("pc_name").remove("last_host")
             .remove("cursor_ms").remove("last_sync_ms").remove("last_error").apply()

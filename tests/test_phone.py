@@ -105,7 +105,8 @@ class SyncTest(PhoneBase):
         device, _ = self.pair()
         s = {"pkg": "com.instagram.android", "label": "Instagram", "start": ms(at(9)), "end": ms(at(9, 10))}
         r = phone.sync(self.conn, device, {"sessions": [s], "unlocks": [ms(at(9))]}, now=at(12))
-        self.assertEqual(r, {"ok": True, "sessions": 1, "unlocks": 1})
+        self.assertEqual({k: r[k] for k in ("ok", "sessions", "unlocks")}, {"ok": True, "sessions": 1, "unlocks": 1})
+        self.assertIn("phone_block", r)  # + focus state and alert for the phone
         # the same session again, now longer (it was still running) + the same unlock
         phone.sync(self.conn, device, {"sessions": [{**s, "end": ms(at(9, 25))}], "unlocks": [ms(at(9))]}, now=at(12))
         rows = self.conn.execute("SELECT start_ts, end_ts, app, title FROM sessions WHERE source = 'phone'").fetchall()
@@ -187,6 +188,8 @@ class PhoneTimeTest(PhoneBase):
                   " 'com.instagram.android', 'Instagram', 'p1')", (at(9, 20), at(9, 30)))
         c.execute("INSERT INTO sessions (start_ts, end_ts, source, app, title, client_id) VALUES (?, ?, 'phone',"
                   " 'com.example.weird', 'Weird App', 'p2')", (at(11), at(11, 5)))
+        c.execute("INSERT INTO sessions (start_ts, end_ts, source, app, title, client_id) VALUES (?, ?, 'phone',"
+                  " 'com.android.deskclock', 'Clock', 'p3')", (at(1), at(7)))  # alarm screen: ignored
         c.execute("INSERT INTO phone_unlocks VALUES ('d', ?)", (at(9, 20),))
         c.commit()
         self.rules = categorize.Rules()

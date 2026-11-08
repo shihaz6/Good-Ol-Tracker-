@@ -150,7 +150,7 @@ def name_candidates(conn, rules, now=None) -> list:
             "SELECT lower(app), MAX(title), SUM(end_ts - start_ts) AS secs FROM sessions"
             " WHERE source = 'phone' AND end_ts > ? GROUP BY lower(app) HAVING secs >= ?"
             " ORDER BY secs DESC LIMIT 200", (since, MIN_SECONDS)):
-        if ("phone", pkg) in dismissed_or_done or pkg in rules.phone_apps:
+        if ("phone", pkg) in dismissed_or_done or pkg in rules.phone_apps or pkg in categorize.IGNORED_PHONE_APPS:
             continue
         if sitelists.never_send_app(pkg) or sitelists.never_send_app(label or ""):
             continue

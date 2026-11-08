@@ -54,6 +54,7 @@ import categorize
 import db
 import find
 import focus
+import insights
 import keys
 import mailer
 import nudge
@@ -212,6 +213,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/focus": self._focus_status,
             "/api/nudge": lambda: self._json(200, nudge.status()),
             "/api/phone": lambda: self._json(200, phone.status()),
+            "/api/insights": lambda: self._insights(parse_qs(query)),
         }
         if path in routes:
             if not self._dashboard_ok(api=True):
@@ -266,6 +268,19 @@ class Handler(BaseHTTPRequestHandler):
         conn = db.connect()
         try:
             return self._json(200, analytics.trends(conn, end, days))
+        except ValueError as exc:
+            return self._send(500, {"error": f"categories.json: {exc}"})
+        finally:
+            conn.close()
+
+    def _insights(self, params):
+        try:
+            start, end = self._range(params, default_days=7)
+        except ValueError:
+            return self._send(400, {"error": "start/end must be YYYY-MM-DD"})
+        conn = db.connect()
+        try:
+            return self._json(200, insights.summary(conn, start, end))
         except ValueError as exc:
             return self._send(500, {"error": f"categories.json: {exc}"})
         finally:

@@ -1143,6 +1143,7 @@ async function load() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     render(data);
+    loadInsights(start, end);
     loadAI();
     loadHealth();
     updateExports(start, end);
@@ -1480,6 +1481,114 @@ $("#nudge-snooze").addEventListener("click", async () => {
     loadNudge();
   } catch (err) { say("#nudge-msg", err.message, true); }
 });
+
+// ------------------------------------------------------------------ sleep + phone while studying
+
+async function loadInsights(start, end) {
+  let d;
+  try {
+    const res = await fetch(`/api/insights?start=${start}&end=${end}`, { cache: "no-store" });
+    d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+  } catch { return; }
+  $("#insights-card").hidden = !d.sleep.has_phone;
+  if (!d.sleep.has_phone) return;
+  renderSleep(d.sleep);
+  renderPickups(d.interruptions);
+}
+
+function renderSleep(s) {
+  // Axis: 20:00 -> 14:00 next day (18 h).
+  const AX0 = 20, SPAN = 18;
+  const pos = (ts) => {
+    const t = new Date(ts * 1000);
+    const h = ((t.getHours() + t.getMinutes() / 60 - AX0) + 24) % 24;
+    return Math.max(0, Math.min(100, (h / SPAN) * 100));
+  };
+  const bits = [];
+  if (s.avg_seconds) bits.push(`Average ${fmtDur(s.avg_seconds)} a night, usually ${s.avg_bedtime} to ${s.avg_wake}.`);
+  if (s.productive_after_good != null && s.productive_after_short != null) {
+    bits.push(`After ${s.good_sleep_hours}h+ of sleep you averaged ${fmtDur(s.productive_after_good)} productive the next day; after less, ${fmtDur(s.productive_after_short)}.`);
+  }
+  $("#sleep-sub").textContent = bits.join(" ") || "Estimated from when your phone and PC go quiet at night. Needs a few nights of phone data.";
+
+  const grid = el("div", "timeline sleep");
+  const nights = s.nights.slice().reverse();
+  nights.forEach((n) => {
+    const label = new Date(`${n.date}T12:00`).toLocaleDateString([], { weekday: "short", day: "numeric" });
+    grid.append(el("div", "dlabel", label));
+    const lane = el("div", "lane");
+    if (n.seconds) {
+      const b = el("div", "block");
+      const l = pos(n.bedtime), r = pos(n.wake);
+      b.style.left = `${l}%`;
+      b.style.width = `${Math.max(0.5, r - l)}%`;
+      b.style.background = n.seconds >= s.good_sleep_hours * 3600 ? "var(--cat-7)" : "var(--cat-5)";
+      lane.append(b);
+      const tip = { title: `Night of ${label}`, rows: [
+        { label: "Asleep", value: `${fmtClock(n.bedtime)} – ${fmtClock(n.wake)}` },
+        { label: "Length", value: fmtDur(n.seconds) },
+        { label: "Productive next day", value: n.next_day_complete ? fmtDur(n.next_day_productive) : "day not over" },
+      ] };
+      setTip(lane, tip);
+      lane.tabIndex = 0;
+      lane.append(el("span", "sleep-len", fmtDur(n.seconds)));
+    } else {
+      lane.append(el("span", "sleep-len muted", "no data"));
+    }
+    grid.append(lane);
+  });
+  const hours = el("div", "hours");
+  for (let h = 0; h <= SPAN; h += 3) {
+    const sp = el("span", null, `${String((AX0 + h) % 24).padStart(2, "0")}:00`);
+    sp.style.left = `${(h / SPAN) * 100}%`;
+    hours.append(sp);
+  }
+  grid.append(hours);
+  const key = el("div", "legend");
+  [["var(--cat-7)", `${s.good_sleep_hours}h or more`], ["var(--cat-5)", `under ${s.good_sleep_hours}h`]].forEach(([c, t]) => {
+    const item = el("span");
+    const sw = el("span", "swatch");
+    sw.style.background = c;
+    item.append(sw, document.createTextNode(t));
+    key.append(item);
+  });
+  $("#sleep").replaceChildren(key, grid);
+  $("#sleep-table").replaceChildren(table(
+    [{ label: "Night" }, { label: "Asleep" }, { label: "Length", num: true }, { label: "Productive next day", num: true }],
+    nights.map((n) => [n.date, n.seconds ? `${fmtClock(n.bedtime)} – ${fmtClock(n.wake)}` : "–",
+      n.seconds ? fmtDur(n.seconds) : "–", n.next_day_complete ? fmtDur(n.next_day_productive) : "–"])));
+}
+
+function renderPickups(p) {
+  if (!p.count && !p.breaks) {
+    $("#pickups").replaceChildren(empty(p.study_seconds ? "No phone pickups while you studied. Nice." : "No study time on the PC in this range."));
+    return;
+  }
+  const tiles = el("div", "tiles mini-tiles");
+  tiles.append(
+    tile("Pickups", String(p.count), p.per_study_hour != null ? `${p.per_study_hour} per study hour` : `${fmtDur(p.study_seconds)} studied`),
+    tile("Time on the phone", fmtDur(p.seconds), p.count ? `${fmtDur(p.avg_seconds)} each on average` : ""),
+  );
+  if (p.breaks) tiles.append(tile("Long breaks", String(p.breaks), `over 15 min · ${fmtDur(p.break_seconds)} in total`));
+  const parts = [tiles];
+  if (p.in_focus) parts.push(el("p", "muted", `${p.in_focus} of them during a focus session.`));
+  if (p.top_apps.length) {
+    parts.push(el("h3", "mini", "Mostly"));
+    const max = p.top_apps[0].seconds || 1;
+    const grid = el("div", "bars thin");
+    p.top_apps.forEach((a) => {
+      const track = el("div", "track");
+      const bar = el("div", "bar");
+      bar.style.width = `${(a.seconds / max) * 100}%`;
+      bar.style.background = "var(--neutral-bar)";
+      track.append(bar);
+      grid.append(el("div", "name", a.app), track, el("div", "val", fmtDur(a.seconds)));
+    });
+    parts.push(grid);
+  }
+  $("#pickups").replaceChildren(...parts);
+}
 
 // ------------------------------------------------------------------ phone
 

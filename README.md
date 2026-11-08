@@ -214,6 +214,27 @@ times** to the tracker. Never notifications, messages or anything inside apps.
   category); unknown apps get Groq suggestions. Overlap with PC time counts once, as phone
   time. Dashboard: *All / PC / Phone* filter and a Phone tile with unlocks.
 
+### Phone focus mode, alerts, sleep, pickups
+
+- **Focus mode on the phone:** start from the app (25/50/90 min), the PC dashboard or the
+  extension; during a session, apps on the block list (your `phone_apps` set to
+  Entertainment/Social, plus unknown apps whose name says so) are sent to the home screen
+  with a "blocked" screen (time left, two-tap *End early*). Needs the app's Accessibility
+  service ("Good ol Tracker focus mode"): it only sees *which* app is open. If the PC isn't
+  reachable, a phone-only session still blocks. Blocked attempts show in the focus history.
+- **Faster sync:** with that service on, the phone syncs every minute while the screen is on
+  (5 min backoff when the PC isn't around), so focus and alerts reach it quickly.
+- **Alerts on the phone:** when the streak was on the phone, the alert ("25 min on
+  Instagram") shows as a phone notification with *Start 25-min focus* / *Snooze*. If the
+  phone doesn't pick it up within 2½ min it goes to the PC instead.
+- **Sleep** (dashboard *Sleep and phone* card, emails): the longest quiet stretch (no phone,
+  unlock or PC use) between 18:00 and 15:00, if ≥ 3 h. An estimate. Compared with the next
+  day's productive time once there are complete PC-tracked days on both sides of 7 h.
+- **Phone while studying:** pickups with productive PC time within 5 min before and after
+  (or during a focus session); longer than 15 min counts as a break instead.
+- **Emails:** phone time (vs the previous period), unlocks, top phone apps, pickups during
+  study and average sleep.
+
 ## Email reports (Gmail)
 
 Set up on the dashboard's **Email reports** card: your Gmail address, where to send,

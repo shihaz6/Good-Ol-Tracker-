@@ -33,6 +33,7 @@ OTHER_GAP = 90          # a non-distracting stretch shorter than this doesn't en
 IDLE_GAP = 180          # nor does a pause (nothing logged) shorter than this
 LIVE = 90               # the streak must still be going: last activity at most this long ago
 HANDOFF = 75            # seconds the extension has to collect an alert before Windows shows it
+PHONE_HANDOFF = 150     # the phone syncs every minute while in use; after this it goes to the PC
 FOCUS_MINUTES = 25      # the alert's "Start focus" button
 
 DEFAULTS = {"enabled": True, "minutes": 20, "repeat": 20, "snooze": 30,
@@ -104,7 +105,8 @@ def streak(items, cats, now):
             if other >= OTHER_GAP:
                 break
         cursor = min(cursor, it.start)
-    return {"start": start, "seconds": seconds, "top": names.most_common(2)}
+    return {"start": start, "seconds": seconds, "top": names.most_common(2),
+            "on_phone": items[-1].source == "phone"}
 
 
 def _pretty(name: str) -> str:
@@ -141,7 +143,8 @@ def check(conn, now=None, rules=None):
         return None
     with _lock:
         alert = {"id": state["next_id"], "ts": now, "focus_minutes": FOCUS_MINUTES,
-                 "snooze_minutes": cfg["snooze"], **message_for(s, cfg["categories"])}
+                 "snooze_minutes": cfg["snooze"], "target": "phone" if s.get("on_phone") else "pc",
+                 **message_for(s, cfg["categories"])}
         state["next_id"] += 1
         state["last_alert"] = now
         state["pending"] = alert
@@ -150,10 +153,14 @@ def check(conn, now=None, rules=None):
     return alert
 
 
-def take():
-    """The extension collects the pending alert (once)."""
+def take(target="pc"):
+    """The device the alert is for collects it (once): "pc" = the browser extension,
+    "phone" = the Android app (when you were on the phone at the time)."""
     with _lock:
-        alert, state["pending"] = state["pending"], None
+        alert = state["pending"]
+        if not alert or alert.get("target", "pc") != target:
+            return None
+        state["pending"] = None
     return alert
 
 
@@ -197,6 +204,10 @@ def handoff(now=None, toast=windows_toast):
     now = now or time.time()
     with _lock:
         alert = state["pending"]
+        if alert and alert.get("target") == "phone" and now - alert["ts"] >= PHONE_HANDOFF:
+            # The phone didn't pick it up (screen off, out of reach): show it on the PC instead.
+            alert.update(target="pc", ts=now)
+            return None
         if not alert or now - alert["ts"] < HANDOFF:
             return None
         state["pending"] = None

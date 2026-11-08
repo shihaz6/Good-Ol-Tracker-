@@ -23,6 +23,7 @@ import analytics
 import categorize
 import db
 import focus
+import insights
 import keys
 import weekly
 
@@ -174,6 +175,7 @@ def build_daily(conn, day: date, rules=None):
     ]
     if s["offline_seconds"]:
         stats.insert(2, ("Offline (logged)", _dur(s["offline_seconds"])))
+    stats += _phone_rows(conn, day, day, rules)
     cats = sorted(t["by_category"].items(), key=lambda kv: -kv[1])
     apps = [(a["name"], _dur(a["seconds"])) for a in s["top_apps"][:5]]
     topics = ", ".join(x["term"] for x in s["topics"][:10]) or "-"
@@ -188,6 +190,43 @@ def build_daily(conn, day: date, rules=None):
         f"<p><b>Topics:</b> {html.escape(topics)}</p>",
     ])
     return subject, text, body
+
+
+def _phone_rows(conn, start: date, end: date, rules, delta=None) -> list:
+    """Phone time, phone pickups during study and sleep, when a phone is connected."""
+    if not conn.execute("SELECT 1 FROM sessions WHERE source = 'phone' LIMIT 1").fetchone():
+        return []
+    rules = rules or categorize.Rules()
+    n = (end - start).days + 1
+    cur = analytics.summary(conn, start, end, rules, device="phone")
+    p = cur["phone"]
+    rows = []
+    if p["seconds"]:
+        line = f"{_dur(p['seconds'])}"
+        if n > 1:
+            line += f" ({_dur(p['seconds'] / n)}/day)"
+        if delta:
+            prev = analytics.summary(conn, start - timedelta(days=n), start - timedelta(days=1), rules, device="phone")
+            if prev["phone"]["seconds"]:
+                line += delta(p["seconds"], prev["phone"]["seconds"], "dur", False)
+        line += f" · {p['unlocks']} unlocks"
+        rows.append(("Phone", line))
+        top = [a for a in cur["top_apps"] if a["kind"] == "phone"][:3]
+        if top:
+            rows.append(("Top phone apps", ", ".join(f"{a['label']} {_dur(a['seconds'])}" for a in top)))
+    s0, s1 = analytics._midnight(start), analytics._midnight(end + timedelta(days=1))
+    intr = insights.interruptions(conn, s0, s1, rules)
+    if intr["count"]:
+        line = f"{intr['count']} pickups, {_dur(intr['seconds'])} in total"
+        if intr["per_study_hour"] is not None:
+            line += f" · {intr['per_study_hour']} per study hour"
+        if intr["top_apps"]:
+            line += f" · mostly {intr['top_apps'][0]['app']}"
+        rows.append(("Phone during study", line))
+    sl = insights.sleep(conn, end, min(n, 14), rules)
+    if sl["avg_seconds"]:
+        rows.append(("Sleep (estimated)", f"{_dur(sl['avg_seconds'])} a night · usually {sl['avg_bedtime']} to {sl['avg_wake']}"))
+    return rows
 
 
 def build_period(conn, start: date, end: date, ai_text: str | None, ai_note: str = "", rules=None):
@@ -216,6 +255,7 @@ def build_period(conn, start: date, end: date, ai_text: str | None, ai_note: str
         if f["blocked"]:
             line += f" · {f['blocked']} blocked site visits"
         compare.append(("Focus sessions", line))
+    compare += _phone_rows(conn, start, end, rules, d)
     cats = sorted(now_p["by_category"].items(), key=lambda kv: -kv[1])
     if ai_text:
         ai_block = ai_text

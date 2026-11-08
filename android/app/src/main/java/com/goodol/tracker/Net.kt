@@ -152,7 +152,16 @@ object Net {
     private const val BATCH = 1000
     private const val BACKFILL_MS = 7L * 24 * 3600 * 1000  // Android keeps roughly a week
 
+    /** Start/stop focus or snooze alerts on the PC. Returns its reply (focus state etc). */
+    fun focusAction(context: Context, prefs: Prefs, body: JSONObject): JSONObject {
+        val pc = findPc(context, prefs) ?: throw NetError("PC not found on this network")
+        val (code, res) = request(pc, "/phone/focus", body, prefs.token, timeoutMs = 5000)
+        if (code != 200) throw NetError(res.optString("error", "PC answered $code"))
+        return res
+    }
+
     /** Sends everything since the cursor. Returns how many sessions went over. */
+    @Synchronized
     fun sync(context: Context, prefs: Prefs): Int {
         if (!prefs.paired) throw NetError("Not connected to a PC yet")
         if (!Usage.hasAccess(context)) throw NetError("Usage access is off")
@@ -170,11 +179,14 @@ object Net {
                     }
                 })
                 .put("unlocks", JSONArray().apply { if (i == 0) data.unlocks.forEach { put(it) } })
+                .put("focus_blocks", if (i == 0) JSONArray(prefs.pendingBlocks) else JSONArray())
                 .put("client", JSONObject().put("version", BuildConfig.VERSION_NAME)
                     .put("behind", (now - from) / 1000))
             val (code, res) = request(pc, "/phone/sync", body, prefs.token)
             if (code == 401) { prefs.forget(); throw NetError("The PC no longer knows this phone. Connect again.") }
             if (code != 200) throw NetError(res.optString("error", "PC answered $code"))
+            if (i == 0) prefs.pendingBlocks = "[]"
+            Focus.applyReply(context, res)  // focus on/off, apps to block, alert to show
             sent += chunk.size
             // Next time, start at the last session sent: if it was still running, it's re-sent
             // with the same start (the PC just extends it). Nothing before it is read again.
