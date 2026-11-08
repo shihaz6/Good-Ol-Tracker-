@@ -13,10 +13,15 @@ import argparse
 import logging
 import logging.handlers
 import sys
+import threading
 import time
 
+import ai_categorize
+import categorize
 import db
+import keys
 import server
+import weekly
 import win32
 
 INTERVAL = 5            # seconds between samples
@@ -24,6 +29,8 @@ IDLE_THRESHOLD = 120    # seconds without input before you count as AFK
 MAX_GAP = INTERVAL * 3  # a bigger gap between samples (sleep, hang) breaks the session
 PAGE_TEXT_DAYS = 60     # full page text older than this is deleted (titles/time kept)
 PURGE_EVERY = 3600      # seconds between retention clean-ups
+AI_EVERY = 120          # seconds between AI categoriser runs (Voyage)
+AUTO_WEEKLY = True      # after each Monday, summarise the previous Mon-Sun via Groq (if key set)
 
 BROWSERS = {"brave.exe", "chrome.exe", "msedge.exe"}
 
@@ -94,6 +101,36 @@ class Tracker:
             time.sleep(INTERVAL)
 
 
+def ai_worker() -> None:
+    """Background thread: AI categories for new pages + the automatic weekly summary.
+    Network calls live here so the 5-second desktop sampling is never delayed."""
+    conn = db.connect()
+    last_weekly_check = 0.0
+    while True:
+        try:
+            result = ai_categorize.run_batch(conn, categorize.Rules())
+            ai_categorize.status.update(last_run=time.time(), last_error=None)
+            if result.get("embedded") or result.get("reclassified"):
+                log.info("ai categoriser: %s", result)
+        except ai_categorize.AIError as exc:
+            ai_categorize.status["last_error"] = str(exc)
+            log.warning("ai categoriser: %s", exc)
+        except Exception:
+            log.exception("ai categoriser failed")
+
+        if AUTO_WEEKLY and time.time() - last_weekly_check >= 3600:
+            last_weekly_check = time.time()
+            try:
+                due = weekly.due_week(conn)
+                if due and keys.load_key("groq"):
+                    weekly.generate(conn, *due)
+            except weekly.SummaryError as exc:
+                log.info("weekly summary not generated: %s", exc)
+            except Exception:
+                log.exception("weekly summary failed")
+        time.sleep(AI_EVERY)
+
+
 def setup_logging(verbose: bool) -> None:
     db.DATA_DIR.mkdir(parents=True, exist_ok=True)
     log.setLevel(logging.DEBUG)
@@ -129,6 +166,7 @@ def main():
 
     conn = db.connect()
     log.info("logging to %s", db.DB_PATH)
+    threading.Thread(target=ai_worker, name="ai-worker", daemon=True).start()
     try:
         Tracker(conn, state).run()
     except KeyboardInterrupt:

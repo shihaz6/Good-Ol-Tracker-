@@ -95,6 +95,25 @@ What counts as productive is the `"productive"` list in `categories.json`. Focus
 streaks tolerate interruptions up to 2 minutes (`FOCUS_GAP` in `desktop/analytics.py`).
 The dashboard loads nothing from the internet, and other websites can't read its data.
 
+## AI (step 5)
+
+Two optional API keys, each in its own file in `data\` (gitignored) or an env var:
+
+| Key | File | Used for | What leaves the PC |
+|---|---|---|---|
+| Voyage | `data\voyage_key.txt` (`VOYAGE_API_KEY`) | Categorising pages the rules can't decide | Each scanned page's title, channel, description, headings and first ~1,500 characters, once per page |
+| Groq | `data\groq_key.txt` (`GROQ_API_KEY`) | Weekly summary | Totals only: hours per category/day, focus stats, top app/site names, topic words. Never page text, titles, URLs or searches |
+
+- **AI categoriser** (`desktop/ai_categorize.py`): runs in the tracker's background every
+  2 minutes. Compares each page to the example `descriptions` per category in
+  `categories.json`. Rules and keywords always win; the AI only fills in pages they
+  can't decide. Each page is embedded once and cached; editing `descriptions`
+  re-categorises without re-sending pages.
+- **Weekly summary** (`desktop/weekly.py`): written automatically each Monday for the
+  previous Mon-Sun, or on demand with the dashboard button. The dashboard shows
+  exactly what gets sent (*What gets sent to Groq*). Command line:
+  `python desktop\weekly.py --preview` / `python desktop\weekly.py`.
+
 ## Categories
 
 Rules live in `categories.json` at the project root. Categories are worked out when

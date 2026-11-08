@@ -32,6 +32,22 @@
     <section class="tiles" id="tiles" aria-label="Summary"></section>
 
     <div class="grid">
+      <section class="card wide" id="ai-card">
+        <div class="card-head">
+          <h2>Weekly AI summary</h2>
+          <button id="generate" class="ghost" type="button">Summarise last 7 days</button>
+        </div>
+        <p class="sub" id="ai-sub"></p>
+        <div id="summary" class="summary"></div>
+        <details id="preview">
+          <summary>What gets sent to Groq</summary>
+          <p class="sub">Totals only: hours per category and day, focus stats, top app/site names and
+            topic words. Never page text, titles, URLs or your searches.</p>
+          <pre id="preview-json">Loading…</pre>
+        </details>
+        <p class="muted" id="ai-cat"></p>
+      </section>
+
       <section class="card">
         <h2>Time by category</h2>
         <p class="sub" id="cats-sub"></p>

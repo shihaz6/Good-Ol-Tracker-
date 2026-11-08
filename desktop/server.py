@@ -11,6 +11,9 @@ Endpoints:
   POST /ingest       -> {"visits": [...], "pages": [...], "searches": [...], "media": bool}
   GET  /             -> dashboard page (desktop/dashboard/)
   GET  /api/summary?start=YYYY-MM-DD&end=YYYY-MM-DD -> dashboard data
+  GET  /api/ai              -> AI status + latest weekly summary
+  GET  /api/weekly/preview  -> exactly what a weekly summary would send to Groq
+  POST /api/weekly          -> generate a summary of the last 7 days (dashboard only)
        Same-origin only: other websites can't read it (no CORS, Sec-Fetch-Site and
        Origin checks, Host check against DNS rebinding).
 """
@@ -25,8 +28,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs
 
+import ai_categorize
 import analytics
 import db
+import keys
+import weekly
 
 PORT = 47321
 MEDIA_GRACE = 75          # a "media playing" heartbeat counts for this many seconds
@@ -163,12 +169,60 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "dashboard files missing"})
             return self._send_bytes(200, body, ctype, PAGE_HEADERS if name.endswith(".html") else None)
 
-        if path == "/api/summary":
+        if path in ("/api/summary", "/api/ai", "/api/weekly/preview"):
             if not self._dashboard_ok(api=True):
                 return self._send(403, {"error": "forbidden"})
-            return self._summary(parse_qs(query))
+            if path == "/api/summary":
+                return self._summary(parse_qs(query))
+            if path == "/api/ai":
+                return self._ai_status()
+            return self._weekly_preview()
 
         self._send(404, {"error": "not found"})
+
+    def _ai_status(self):
+        conn = db.connect()
+        try:
+            data = {
+                "voyage_key": bool(keys.load_key("voyage")),
+                "groq_key": bool(keys.load_key("groq")),
+                "categoriser": {**ai_categorize.counts(conn), **ai_categorize.status},
+                "summary": weekly.latest(conn),
+                "default_range": [d.isoformat() for d in weekly.last_7_days()],
+            }
+        finally:
+            conn.close()
+        self._send_bytes(200, json.dumps(data).encode(), "application/json")
+
+    def _weekly_preview(self):
+        start, end = weekly.last_7_days()
+        conn = db.connect()
+        try:
+            payload = weekly.build_payload(conn, start, end)
+        except ValueError as exc:
+            return self._send(500, {"error": f"categories.json: {exc}"})
+        finally:
+            conn.close()
+        self._send_bytes(200, json.dumps(payload).encode(), "application/json")
+
+    def _weekly_generate(self):
+        # Triggers an outside API call, so only the dashboard page itself may do it:
+        # an Origin header is required (browsers always send one on POST) and must be ours.
+        if (self.headers.get("Host") not in ALLOWED_HOSTS
+                or self.headers.get("Origin") not in SAME_ORIGINS
+                or self.headers.get("Sec-Fetch-Site", "same-origin") != "same-origin"):
+            return self._send(403, {"error": "forbidden"})
+        start, end = weekly.last_7_days()
+        conn = db.connect()
+        try:
+            summary = weekly.generate(conn, start, end)
+        except weekly.SummaryError as exc:
+            return self._send(400, {"error": str(exc)})
+        except ValueError as exc:
+            return self._send(500, {"error": f"categories.json: {exc}"})
+        finally:
+            conn.close()
+        self._send_bytes(200, json.dumps(summary).encode(), "application/json")
 
     def _summary(self, params):
         try:
@@ -192,6 +246,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send_bytes(200, json.dumps(data).encode(), "application/json")
 
     def do_POST(self):
+        if self.path == "/api/weekly":
+            return self._weekly_generate()
         if self.path != "/ingest":
             return self._send(404, {"error": "not found"})
         if not self._authorized():

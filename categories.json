@@ -8,6 +8,7 @@
     "keywords: words or phrases that vote for a category; whole words, case-insensitive.",
     "fallback: what unmatched things become. 'app'/'site' fallbacks show up in 'Not categorised yet'.",
     "productive: categories that count as productive time and focus in the dashboard.",
+    "descriptions: example phrases per category for the AI categoriser (Voyage). It only decides pages the rules above can't.",
     "Order of 'categories' = order (and colour) in the dashboard; keep Unsure and Other last."
   ],
 
@@ -168,6 +169,47 @@
     "CS50": "Study",
     "Khan Academy": "Study",
     "Fireship": "Study"
+  },
+
+  "descriptions": {
+    "Coding": [
+      "debugging an error in my code and reading a stack trace",
+      "software documentation and API reference for a programming library",
+      "a code repository, pull request or issue on GitHub",
+      "configuring a development environment, build tools, git or deployment"
+    ],
+    "Study": [
+      "a university lecture or course material explaining a concept",
+      "a tutorial teaching programming, databases, algorithms or computer science",
+      "learning mathematics, statistics or physics with worked examples",
+      "exam revision, past papers, assignments and study notes"
+    ],
+    "Work": [
+      "writing a report, proposal or presentation for a project",
+      "job applications, internships, CVs and career advice",
+      "project management, planning documents and team tasks"
+    ],
+    "Communication": [
+      "reading and replying to emails or messages",
+      "a video call or online meeting"
+    ],
+    "Entertainment": [
+      "a gaming video, gameplay or game review",
+      "music videos, songs, movies, TV series and trailers",
+      "funny videos, memes, comedy and pranks",
+      "sports highlights and match coverage",
+      "a vlog showing someone's daily life, routine or travels"
+    ],
+    "Social": [
+      "a social media feed with posts from friends and influencers",
+      "a discussion thread where people share opinions and stories"
+    ],
+    "Browsing": [
+      "shopping for products, prices and online store listings",
+      "an online store product page with price, ratings, delivery and add to cart",
+      "general news articles and current events",
+      "vehicle, travel or lifestyle websites"
+    ]
   },
 
   "keywords": {

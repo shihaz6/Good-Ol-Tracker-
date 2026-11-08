@@ -50,12 +50,13 @@ class Rules:
         self.apps = {k.lower(): v for k, v in raw.get("apps", {}).items()}
         self.sites = {k.lower(): v for k, v in raw.get("sites", {}).items()}
         self.channels = {k.lower(): v for k, v in raw.get("channels", {}).items()}
+        self.descriptions = {k: [str(t) for t in v] for k, v in raw.get("descriptions", {}).items() if v}
         self.keywords = {
             cat: re.compile(r"(?<!\w)(?:" + "|".join(re.escape(w) for w in words) + r")(?!\w)", re.I)
             for cat, words in raw.get("keywords", {}).items() if words
         }
         used = [*self.apps.values(), *self.sites.values(), *self.channels.values(),
-                *self.keywords, *self.fallback.values(), *self.productive]
+                *self.keywords, *self.fallback.values(), *self.productive, *self.descriptions]
         unknown = sorted({c for c in used if c not in self.categories and c != CONTENT})
         if unknown:
             raise ValueError(f"categories.json uses categories not in the list: {unknown}")
@@ -101,16 +102,20 @@ class Rules:
         return fields
 
     def classify_browser(self, domain: str, title: str, page: dict | None):
+        """Order: site rule > channel rule > keywords > AI (embeddings) > fallback."""
         rule = self.site_rule(domain)
+        ai = (page or {}).get("ai_category")
+        if ai not in self.categories:
+            ai = None
         if rule == CONTENT:
             author = (page or {}).get("author") or ""
             if author.lower() in self.channels:
                 return self.channels[author.lower()], True
-            return self.classify_text(self._page_fields(title, page)) or self.fallback["content"], True
+            return self.classify_text(self._page_fields(title, page)) or ai or self.fallback["content"], True
         if rule:
             return rule, True
         # Unknown site: let the page content (if scanned) or the tab title decide.
-        cat = self.classify_text(self._page_fields(title, page))
+        cat = self.classify_text(self._page_fields(title, page)) or ai
         return (cat, True) if cat else (self.fallback["site"], False)
 
 
@@ -121,10 +126,11 @@ def _load_pages(conn, urls):
     for i in range(0, len(urls), 500):
         chunk = urls[i:i + 500]
         rows = conn.execute(
-            f"SELECT url, title, author, description, headings, body FROM pages"
-            f" WHERE url IN ({','.join('?' * len(chunk))})", chunk)
+            f"SELECT p.url, p.title, p.author, p.description, p.headings, p.body, a.category"
+            f" FROM pages p LEFT JOIN page_ai a ON a.url = p.url"
+            f" WHERE p.url IN ({','.join('?' * len(chunk))})", chunk)
         for url, *vals in rows:
-            pages[url] = dict(zip(("title", "author", "description", "headings", "body"), vals))
+            pages[url] = dict(zip(("title", "author", "description", "headings", "body", "ai_category"), vals))
     return pages
 
 

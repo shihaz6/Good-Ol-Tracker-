@@ -514,6 +514,91 @@ function render(d) {
   renderRules(d);
 }
 
+// ------------------------------------------------------------------ AI summary
+
+// Minimal, safe Markdown: headings, bullet/numbered lists, paragraphs. Text only (no HTML).
+function renderMarkdown(md) {
+  const out = [];
+  let list = null;
+  const clean = (s) => s.replace(/\*\*|__|`/g, "").replace(/^\*(.+)\*$/, "$1");
+  md.split(/\r?\n/).forEach((raw) => {
+    const line = raw.trim();
+    const bullet = line.match(/^[-*•]\s+(.*)/);
+    const numbered = line.match(/^\d+[.)]\s+(.*)/);
+    if (bullet || numbered) {
+      const tag = bullet ? "ul" : "ol";
+      if (!list || list.tagName.toLowerCase() !== tag) { list = el(tag); out.push(list); }
+      list.append(el("li", null, clean((bullet || numbered)[1])));
+      return;
+    }
+    list = null;
+    if (!line) return;
+    const heading = line.match(/^#{1,6}\s+(.*)/);
+    out.push(heading ? el("h3", null, clean(heading[1])) : el("p", null, clean(line)));
+  });
+  return out;
+}
+
+async function loadAI() {
+  let ai;
+  try {
+    const res = await fetch("/api/ai", { cache: "no-store" });
+    ai = await res.json();
+    if (!res.ok) throw new Error(ai.error || res.status);
+  } catch {
+    return; // main error banner already covers "tracker not running"
+  }
+  const s = ai.summary;
+  const gen = $("#generate");
+  gen.disabled = !ai.groq_key;
+  gen.title = ai.groq_key ? "" : "Add your Groq key first";
+  if (s) {
+    const when = new Date(s.created_ts * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+    $("#ai-sub").textContent = `${s.start} to ${s.end} · written ${when} by ${s.model}`;
+    $("#summary").replaceChildren(...renderMarkdown(s.text));
+  } else {
+    $("#ai-sub").textContent = ai.groq_key
+      ? "No summary yet. One is written automatically each Monday for the previous week, or make one now."
+      : "Add your Groq API key to data\\groq_key.txt to get weekly summaries.";
+    $("#summary").replaceChildren();
+  }
+  const c = ai.categoriser;
+  let cat;
+  if (!ai.voyage_key) cat = "AI categoriser off: add your Voyage API key to data\\voyage_key.txt.";
+  else if (c.last_error) cat = `AI categoriser: ${c.last_error}`;
+  else cat = `AI categoriser (${c.model || "Voyage"}): ${c.pages_categorised} of ${c.pages_done} pages placed`
+    + (c.pages_pending ? `, ${c.pages_pending} waiting` : "") + ". It only decides pages your rules can't.";
+  $("#ai-cat").textContent = cat;
+}
+
+$("#preview").addEventListener("toggle", async (e) => {
+  if (!e.target.open) return;
+  try {
+    const res = await fetch("/api/weekly/preview", { cache: "no-store" });
+    const data = await res.json();
+    $("#preview-json").textContent = JSON.stringify(data, null, 2);
+  } catch {
+    $("#preview-json").textContent = "Couldn't load the preview.";
+  }
+});
+
+$("#generate").addEventListener("click", async () => {
+  const btn = $("#generate");
+  btn.disabled = true;
+  btn.textContent = "Writing summary…";
+  try {
+    const res = await fetch("/api/weekly", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    await loadAI();
+  } catch (err) {
+    $("#ai-sub").textContent = `Couldn't write a summary: ${err.message}`;
+  } finally {
+    btn.textContent = "Summarise last 7 days";
+    btn.disabled = false;
+  }
+});
+
 // ------------------------------------------------------------------ data & controls
 
 function rangeDates() {
@@ -537,6 +622,7 @@ async function load() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     render(data);
+    loadAI();
     $("#error").hidden = true;
     $("#updated").textContent = `Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
     if (data.range.includes_today) state.timer = setTimeout(load, REFRESH_MS);

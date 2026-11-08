@@ -50,6 +50,35 @@ CREATE TABLE IF NOT EXISTS searches (
     client_id  TEXT UNIQUE            -- dedupes re-sends from the extension
 );
 CREATE INDEX IF NOT EXISTS idx_searches_ts ON searches(ts);
+
+-- AI categoriser (Voyage embeddings). Vectors are float32 blobs.
+CREATE TABLE IF NOT EXISTS page_ai (
+    url         TEXT PRIMARY KEY,     -- matches pages.url
+    model       TEXT NOT NULL,
+    text_hash   TEXT NOT NULL,        -- what was embedded (re-embed when the page changes)
+    vector      BLOB NOT NULL,
+    category    TEXT,                 -- NULL = no confident match
+    score       REAL,
+    rules_hash  TEXT,                 -- category descriptions it was compared against
+    updated_ts  REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS prototype_vectors (
+    text_hash   TEXT NOT NULL,
+    model       TEXT NOT NULL,
+    vector      BLOB NOT NULL,
+    PRIMARY KEY (text_hash, model)
+);
+
+-- Weekly AI summaries (Groq). payload = exactly what was sent.
+CREATE TABLE IF NOT EXISTS summaries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_ts  REAL NOT NULL,
+    start_day   TEXT NOT NULL,
+    end_day     TEXT NOT NULL,
+    model       TEXT NOT NULL,
+    payload     TEXT NOT NULL,
+    text        TEXT NOT NULL
+);
 """
 
 PAGE_KINDS = ("youtube", "article", "page", "search")

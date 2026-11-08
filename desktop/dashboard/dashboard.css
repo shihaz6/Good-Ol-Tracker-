@@ -201,6 +201,21 @@ td.title { max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-sp
 .meter { display: inline-block; width: 56px; height: 6px; border-radius: 3px; background: var(--wash); vertical-align: middle; margin-right: 6px; overflow: hidden; }
 .meter i { display: block; height: 100%; background: var(--neutral-bar); border-radius: 3px; }
 
+/* ------------------------------------------------------------ AI summary */
+
+.card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 2px; }
+.ghost:disabled { opacity: 0.6; cursor: progress; }
+.summary { max-width: 78ch; }
+.summary h3 { font-size: 14px; margin: 16px 0 4px; }
+.summary h3:first-child { margin-top: 4px; }
+.summary p { margin: 0 0 8px; }
+.summary ul, .summary ol { margin: 0 0 8px; padding-left: 20px; }
+.summary li { margin: 2px 0; }
+pre#preview-json {
+  max-height: 320px; overflow: auto; background: var(--wash); border-radius: 8px; padding: 12px;
+  font: 12px/1.45 ui-monospace, Consolas, monospace; white-space: pre;
+}
+
 /* ------------------------------------------------------------ tooltip */
 
 .tip {
