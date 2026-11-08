@@ -1,0 +1,33 @@
+# --- Personal data: never commit ---------------------------------------------
+# Activity database (+ SQLite WAL/shared-memory files), logs, and the extension
+# token (a secret). The tracker recreates this folder on first run.
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.log
+token.txt
+
+# --- Python --------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# --- Extension packaging -----------------------------------------------------
+# Brave/Chrome "Pack extension" output; the .pem is the private signing key.
+*.crx
+*.pem
+*.zip
+
+# --- Editor / OS -------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store
