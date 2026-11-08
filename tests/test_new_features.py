@@ -261,6 +261,16 @@ class FocusTest(TempData):
         with self.assertRaises(focus.FocusError):
             focus.save_settings({"minutes": 1})
 
+    def test_adult_filter_setting(self):
+        self.assertEqual(focus.settings()["adult"], "focus")  # on during focus by default
+        focus.start(self.conn, 25)
+        self.assertTrue(focus.current(self.conn)["adult"])
+        self.assertEqual(focus.save_settings({"adult": "always"})["adult"], "always")
+        focus.save_settings({"adult": "off"})
+        self.assertFalse(focus.current(self.conn)["adult"])
+        with self.assertRaises(focus.FocusError):
+            focus.save_settings({"adult": "sometimes"})
+
     def test_start_stop_complete(self):
         now = at(9)
         cur = focus.start(self.conn, 50, "DBMS", now=now)

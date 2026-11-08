@@ -373,7 +373,7 @@ class Handler(BaseHTTPRequestHandler):
         conn = db.connect()
         try:
             if action == "status":
-                return {"ok": True, "focus": focus.current(conn)}
+                return {"ok": True, "focus": focus.current(conn), "adult": focus.settings()["adult"]}
             if action == "start":
                 cur = focus.start(conn, body.get("minutes"), body.get("label", ""))
                 log.info("focus session started: %s min", round((cur["end"] - cur["start"]) / 60))
@@ -547,7 +547,8 @@ def ingest(payload: dict, state: SharedState) -> dict:
         conn.close()
     if "media" in payload:
         state.media_heartbeat(bool(payload["media"]))
-    return {"visits": n_visits, "pages": n_pages, "searches": n_searches, "focus": current_focus}
+    return {"visits": n_visits, "pages": n_pages, "searches": n_searches, "focus": current_focus,
+            "adult": focus.settings()["adult"]}  # adult filter: focus | always | off
 
 
 def start(token: str, state: SharedState) -> ThreadingHTTPServer:

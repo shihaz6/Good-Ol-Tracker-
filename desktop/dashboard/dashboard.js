@@ -1299,6 +1299,7 @@ function renderFocus() {
     $("#focus-stats").replaceChildren();
     $("#focus-history").replaceChildren(empty("No focus sessions yet. Start one above or from the extension's popup."));
   }
+  if (document.activeElement !== $("#adult-mode")) $("#adult-mode").value = f.settings.adult || "focus";
   const ta = $("#focus-sites-form").elements.block;
   if (document.activeElement !== ta && !ta.dataset.dirty) ta.value = f.settings.block.join("\n");
 }
@@ -1334,6 +1335,15 @@ document.querySelectorAll("#focus-form [data-min]").forEach((b) =>
 $("#focus-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   startFocus(ev.target.elements.minutes.value || 50);
+});
+$("#adult-mode").addEventListener("change", async (e) => {
+  try {
+    await post("/api/focus/settings", { adult: e.target.value });
+    say("#focus-msg", { focus: "Adult sites are blocked during focus sessions.",
+      always: "Adult sites are blocked all the time. Brave picks this up within 30 seconds.",
+      off: "Adult sites aren't blocked." }[e.target.value]);
+    loadFocus();
+  } catch (err) { say("#focus-msg", `Couldn't save: ${err.message}`, true); }
 });
 $("#focus-sites-form").elements.block.addEventListener("input", (e) => { e.target.dataset.dirty = "1"; });
 $("#focus-sites-form").addEventListener("submit", async (ev) => {

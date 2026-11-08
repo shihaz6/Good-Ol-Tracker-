@@ -11,7 +11,8 @@ try { url = new URL(target); } catch { /* unknown */ }
 if (url && !/^https?:$/.test(url.protocol)) url = null;
 const host = url ? url.hostname.replace(/^www\./, "") : "";
 
-$("site").textContent = host ? `${host} is blocked` : "This site is blocked";
+const reason = new URLSearchParams(location.search).get("r") === "adult" ? "adult" : "focus";
+$("site").textContent = reason === "adult" ? "Adult site blocked" : host ? `${host} is blocked` : "This site is blocked";
 document.title = host ? `Blocked: ${host}` : "Focus mode";
 
 // Count the attempt once per blocked page (not on reload of this page).
@@ -32,6 +33,17 @@ function fmt(seconds) {
 
 function over() {
   clearInterval(timer);
+  if (reason === "adult") {
+    // Blocked all the time (dashboard setting), not because of a session: nothing counts down.
+    const { adultMode } = adultState;
+    if (adultMode === "always") {
+      $("kicker").textContent = "Blocked";
+      $("left").hidden = true;
+      $("left-note").textContent = "Adult sites are blocked all the time. Change it on the dashboard's Focus mode card.";
+      $("stop").hidden = true;
+      return;
+    }
+  }
   $("kicker").textContent = "Focus session over";
   $("left").textContent = "Done";
   $("left-note").textContent = "";
@@ -50,15 +62,18 @@ function render() {
   $("label").textContent = focus.label ? `Working on: ${focus.label}` : "";
 }
 
+const adultState = { adultMode: "focus" };
+
 async function load() {
-  const { focus: f } = await chrome.storage.local.get("focus");
+  const { focus: f, adultMode } = await chrome.storage.local.get(["focus", "adultMode"]);
+  adultState.adultMode = adultMode || "focus";
   focus = f && f.end > Date.now() / 1000 ? f : null;
   render();
   clearInterval(timer);
   if (focus) timer = setInterval(render, 1000);
 }
 
-chrome.storage.onChanged.addListener((changes) => { if (changes.focus) load(); });
+chrome.storage.onChanged.addListener((changes) => { if (changes.focus || changes.adultMode) load(); });
 
 $("back").addEventListener("click", () => {
   if (history.length > 1) history.back();

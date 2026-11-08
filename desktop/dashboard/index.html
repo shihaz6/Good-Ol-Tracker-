@@ -60,6 +60,13 @@
           <button type="submit" class="primary">Start focus</button>
         </form>
         <p class="formmsg" id="focus-msg" role="status"></p>
+        <label class="inline">Adult sites
+          <select id="adult-mode" class="catsel">
+            <option value="focus">Blocked during focus</option>
+            <option value="always">Blocked all the time</option>
+            <option value="off">Not blocked</option>
+          </select>
+        </label>
         <div id="focus-stats"></div>
         <div id="focus-history"></div>
         <details id="focus-sites">

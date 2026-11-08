@@ -14,7 +14,7 @@
 //    of truth; every /ingest reply says whether a session is running.
 // The "Pause" switch stops 1-3 (focus mode keeps blocking: you asked for it).
 
-importScripts("search.js", "blocklist.js");
+importScripts("search.js", "blocklist.js", "adult.js");
 
 const SERVER = "http://127.0.0.1:47321";
 const IDLE_SECONDS = 120;       // matches the desktop tracker
@@ -209,6 +209,7 @@ async function flush(mediaPlaying) {
 
   if (res.ok) {
     const data = await res.json().catch(() => null);
+    if (data && "adult" in data) await applyAdult(data.adult);
     if (data && "focus" in data) await applyFocus(data.focus);
   }
 }
@@ -216,6 +217,8 @@ async function flush(mediaPlaying) {
 // ---------------------------------------------------------------- focus mode
 
 const FOCUS_RULE_BASE = 1000; // DNR rule ids FOCUS_RULE_BASE + i
+const ADULT_RULE_LIST = 1;    // adult filter: known sites
+const ADULT_RULE_WORDS = 2;   // adult filter: words in the address
 
 const getFocus = async () => {
   const f = await getLocal("focus", null);
@@ -227,30 +230,74 @@ function domainOf(hostname) {
   return h.startsWith("www.") ? h.slice(4) : h;
 }
 
-function focusBlocks(url, focus) {
-  if (!focus) return false;
+// Adult filter mode from the dashboard: "focus" (during focus sessions), "always" or "off".
+const adultActive = (mode, focus) => mode === "always" || (mode !== "off" && !!focus);
+
+// Why a URL is blocked right now: "adult", "focus" or null.
+function blockReason(url, focus, adultMode) {
   const u = parseUrl(url);
-  if (!u || !/^https?:$/.test(u.protocol)) return false;
+  if (!u || !/^https?:$/.test(u.protocol)) return null;
   const host = domainOf(u.hostname);
-  return focus.block.some((d) => host === d || host.endsWith("." + d));
+  if (adultActive(adultMode, focus) && isAdultHost(host)) return "adult";
+  if (focus && focus.block.some((d) => host === d || host.endsWith("." + d))) return "focus";
+  return null;
 }
 
-const blockedPage = (url) => chrome.runtime.getURL("blocked.html") + "#" + encodeURIComponent(url);
+const blockedPage = (url, reason) =>
+  chrome.runtime.getURL(`blocked.html?r=${reason}`) + "#" + encodeURIComponent(url);
+
+const redirectTo = (reason) =>
+  ({ type: "redirect", redirect: { regexSubstitution: chrome.runtime.getURL(`blocked.html?r=${reason}`) + "#\\0" } });
 
 // Network-level block: the site never loads. Needs site access (the all-sites permission);
 // without it the tab check below still catches it, just after the page starts loading.
-async function setBlockRules(focus) {
-  const existing = (await chrome.declarativeNetRequest.getDynamicRules()).map((r) => r.id);
+async function updateBlockRules() {
+  const focus = await getFocus();
+  const adultMode = await getLocal("adultMode", "focus");
   const addRules = (focus ? focus.block : []).slice(0, 500).map((d, i) => ({
     id: FOCUS_RULE_BASE + i,
     priority: 1,
-    action: { type: "redirect", redirect: { regexSubstitution: chrome.runtime.getURL("blocked.html") + "#\\0" } },
+    action: redirectTo("focus"),
     condition: { regexFilter: "^https?://.*", requestDomains: [d], resourceTypes: ["main_frame"] },
   }));
+  if (adultActive(adultMode, focus)) {
+    addRules.push({
+      id: ADULT_RULE_LIST, priority: 2, action: redirectTo("adult"),
+      condition: { regexFilter: "^https?://.*", requestDomains: ADULT_DOMAINS, resourceTypes: ["main_frame"] },
+    }, {
+      id: ADULT_RULE_WORDS, priority: 2, action: redirectTo("adult"),
+      condition: {
+        regexFilter: `^https?://[^/?#]*(${ADULT_WORDS.join("|")})[^/?#]*([/?#].*)?$`,
+        resourceTypes: ["main_frame"],
+      },
+    }, {
+      id: ADULT_RULE_WORDS + 1, priority: 2, action: redirectTo("adult"),
+      condition: { regexFilter: "^https?://[^/?#]*\\.(xxx|porn|sex|adult)\\.?([:/?#].*)?$", resourceTypes: ["main_frame"] },
+    });
+  }
+  const existing = (await chrome.declarativeNetRequest.getDynamicRules()).map((r) => r.id);
   try {
     await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: existing, addRules });
   } catch (err) {
-    console.warn("tracker: focus rules", err);
+    console.warn("tracker: block rules", err);
+  }
+}
+
+async function applyAdult(mode) {
+  if (!["focus", "always", "off"].includes(mode)) return;
+  if ((await getLocal("adultMode", "focus")) === mode) return;
+  await chrome.storage.local.set({ adultMode: mode });
+  await updateBlockRules();
+  if (mode === "always") await closeBlockedTabs();
+}
+
+// Send the tabs you're looking at to the blocked page if they're blocked right now.
+async function closeBlockedTabs() {
+  const focus = await getFocus();
+  const adultMode = await getLocal("adultMode", "focus");
+  for (const t of await chrome.tabs.query({ active: true })) {
+    const reason = blockReason(t.url, focus, adultMode);
+    if (reason) chrome.tabs.update(t.id, { url: blockedPage(t.url, reason) });
   }
 }
 
@@ -262,12 +309,10 @@ async function applyFocus(next) {
     prev.block.join() === valid.block.join();
   if (same || (!prev && !valid)) return;
   await chrome.storage.local.set({ focus: valid });
-  await setBlockRules(valid);
+  await updateBlockRules();
   if (valid) {
     await chrome.alarms.create("focus-end", { when: valid.end * 1000 + 1000 });
-    // Close the door on blocked tabs you're looking at right now.
-    const tabs = await chrome.tabs.query({ active: true });
-    for (const t of tabs) if (focusBlocks(t.url, valid)) chrome.tabs.update(t.id, { url: blockedPage(t.url) });
+    await closeBlockedTabs(); // close the door on blocked tabs you're looking at right now
   } else {
     await chrome.alarms.clear("focus-end");
     if (prev && prev.end <= now() + 5) {
@@ -281,10 +326,9 @@ async function applyFocus(next) {
 
 // Fallback for when the network rules can't redirect (no site access): check on navigation.
 async function enforceFocus(tab) {
-  const focus = await getFocus();
-  if (tab?.url && focusBlocks(tab.url, focus)) {
-    await chrome.tabs.update(tab.id, { url: blockedPage(tab.url) }).catch(() => {});
-  }
+  if (!tab?.url) return;
+  const reason = blockReason(tab.url, await getFocus(), await getLocal("adultMode", "focus"));
+  if (reason) await chrome.tabs.update(tab.id, { url: blockedPage(tab.url, reason) }).catch(() => {});
 }
 
 async function focusRequest(body) {
@@ -305,6 +349,7 @@ async function focusRequest(body) {
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if ("adult" in data) await applyAdult(data.adult);
   await applyFocus(data.focus ?? null);
   return data;
 }
@@ -513,7 +558,7 @@ async function init() {
   // A session that ended while the browser was closed: lift the blocks now.
   const f = await getLocal("focus", null);
   if (f && f.end <= now()) await serial(() => applyFocus(null));
-  else if (!f) await setBlockRules(null);
+  else await updateBlockRules();
   serial(tick);
 }
 

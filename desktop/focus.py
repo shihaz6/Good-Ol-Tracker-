@@ -15,7 +15,8 @@ import db
 
 MIN_MINUTES, MAX_MINUTES = 5, 240
 DONE_GRACE = 60  # stopping within a minute of the end still counts as finished
-DEFAULTS = {"minutes": 50, "block": []}  # block filled from categories.json on first use
+DEFAULTS = {"minutes": 50, "block": [], "adult": "focus"}  # block filled from categories.json on first use
+ADULT_MODES = ("focus", "always", "off")  # adult-site filter (list lives in the extension: adult.js)
 DEFAULT_BLOCK_CATEGORIES = ("Entertainment", "Social")
 EXTRA_DEFAULT_BLOCK = ["reddit.com", "9gag.com"]
 _DOMAIN = re.compile(r"^(?=.{1,253}$)[a-z0-9-]+(\.[a-z0-9-]+)+$")
@@ -60,6 +61,10 @@ def save_settings(body: dict) -> dict:
     current = settings()
     if "minutes" in body:
         current["minutes"] = _minutes(body["minutes"])
+    if "adult" in body:
+        if body["adult"] not in ADULT_MODES:
+            raise FocusError("adult must be focus, always or off")
+        current["adult"] = body["adult"]
     if "block" in body:
         items = body["block"]
         if isinstance(items, str):
@@ -98,7 +103,9 @@ def current(conn, now=None):
                        " WHERE end_ts IS NULL ORDER BY id DESC LIMIT 1").fetchone()
     if not row:
         return None
-    return {"id": row[0], "start": row[1], "end": row[2], "label": row[3], "block": settings()["block"]}
+    s = settings()
+    return {"id": row[0], "start": row[1], "end": row[2], "label": row[3], "block": s["block"],
+            "adult": s["adult"] != "off"}
 
 
 def start(conn, minutes=None, label="", now=None) -> dict:
