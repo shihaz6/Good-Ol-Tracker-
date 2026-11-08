@@ -40,6 +40,26 @@ object Focus {
             prefs.blocked = (0 until arr.length()).map { arr.getString(it) }.toSet()
         }
         res.optJSONObject("nudge")?.let { showNudge(context, it) }
+        res.optJSONObject("wellbeing")?.let { prefs.wellbeing = it.toString() }
+        res.optJSONObject("today")?.let { prefs.today = it.toString(); prefs.todayAtMs = System.currentTimeMillis() }
+        TodayWidget.refresh(context)
+    }
+
+    /** A plain notification (limit warnings, wind-down, filter off). */
+    fun notify(context: Context, id: Int, title: String, text: String) {
+        if (!canNotify(context)) return
+        channel(context)
+        val open = PendingIntent.getActivity(context, 4, Intent(context, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val note = NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build()
+        try { NotificationManagerCompat.from(context).notify(id, note) } catch (e: SecurityException) { }
     }
 
     /** Start (or end) focus: on the PC when reachable, else just on the phone. */

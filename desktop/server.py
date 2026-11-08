@@ -26,6 +26,8 @@ Endpoints:
   GET /api/nudge · POST /api/nudge/settings · POST /api/nudge/snooze   distraction alerts
   POST /nudge {action: snooze}         (token) the extension's Snooze button
   GET /api/phone · POST /api/phone/decide {id, allow} · POST /api/phone/unpair {id}
+  GET /api/wellbeing · POST /api/wellbeing {limits, bedtime, schedules, goals}
+  GET /api/insights?start=&end=        sleep + phone pickups during study
        (the phone itself talks to phone.py on its own port, see there)
   GET  /api/find?q=&meaning=1          -> search pages you've read + past searches
   GET  /api/focus / POST /api/focus/start {minutes,label} / /api/focus/stop / /api/focus/settings
@@ -61,6 +63,7 @@ import nudge
 import phone
 import rules_edit
 import weekly
+import wellbeing
 
 PORT = 47321
 MEDIA_GRACE = 75          # a "media playing" heartbeat counts for this many seconds
@@ -214,6 +217,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/nudge": lambda: self._json(200, nudge.status()),
             "/api/phone": lambda: self._json(200, phone.status()),
             "/api/insights": lambda: self._insights(parse_qs(query)),
+            "/api/wellbeing": self._wellbeing,
         }
         if path in routes:
             if not self._dashboard_ok(api=True):
@@ -272,6 +276,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(500, {"error": f"categories.json: {exc}"})
         finally:
             conn.close()
+
+    def _wellbeing(self):
+        conn = db.connect()
+        try:
+            apps = [{"pkg": p, "label": l} for p, l in conn.execute(
+                "SELECT lower(app), MAX(title) FROM sessions WHERE source = 'phone' AND end_ts > ?"
+                " GROUP BY lower(app) ORDER BY SUM(end_ts - start_ts) DESC LIMIT 60", (time.time() - 30 * 86400,))]
+            data = {"settings": wellbeing.settings(), "goals": wellbeing.goals(conn),
+                    "goal_kinds": wellbeing.GOAL_KINDS, "phone_apps": apps}
+        except ValueError as exc:
+            return self._send(500, {"error": f"categories.json: {exc}"})
+        finally:
+            conn.close()
+        return self._json(200, data)
 
     def _insights(self, params):
         try:
@@ -521,7 +539,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/rules/undo": self._rules_undo,
             "/api/ai/dismiss": self._ai_dismiss,
             "/api/nudge/settings": lambda b: self._json(200, {"ok": True, "settings": nudge.save_settings(b)}),
-            "/api/phone/decide": lambda b: self._json(200, phone.decide(str(b.get("id", "")), bool(b.get("allow")))),
+            "/api/wellbeing": lambda b: self._json(200, {"ok": True, "settings": wellbeing.save(b)}),
+            "/api/phone/decide":lambda b: self._json(200, phone.decide(str(b.get("id", "")), bool(b.get("allow")))),
             "/api/phone/unpair": lambda b: (phone.unpair(str(b.get("id", ""))), self._json(200, {"ok": True}))[1],
             "/api/nudge/snooze": lambda b:self._json(200, {"ok": True, "snoozed_until": nudge.snooze(b.get("minutes"))}),
             "/api/focus/start": lambda b: self._json(200, self._focus_do({**b, "action": "start"})),

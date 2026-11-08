@@ -2,4 +2,5 @@
 <resources>
     <string name="focus_service_label">Good ol Tracker focus mode</string>
     <string name="focus_service_description">During a focus session, sends distracting apps (Facebook, Instagram, YouTube…) back to the home screen. It only sees which app is open, never what is on the screen. Also syncs with your PC every minute while the screen is on.</string>
+    <string name="widget_description">Phone time, unlocks, productive time, goals and a focus button</string>
 </resources>

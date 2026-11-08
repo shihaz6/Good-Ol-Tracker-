@@ -336,6 +336,32 @@ mark { background: var(--wash); color: var(--ink); font-weight: 600; border-radi
 .recent { list-style: none; padding: 0; margin: 8px 0 0; font-size: 13px; color: var(--ink-2); }
 .recent li { padding: 3px 0; }
 .scope { font-size: 12px; color: var(--muted); }
+.goals { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px 28px; }
+.goal-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.goal-status { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.goal-status.bad, .scope.warn { color: var(--error); }
+.goal-track { height: 8px; border-radius: 999px; background: var(--wash); margin: 8px 0 6px; overflow: hidden; }
+.goal-track i { display: block; height: 100%; border-radius: 999px; background: var(--cat-1); }
+.goal-track i.over { background: var(--error); }
+.goal-meta { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+.goal-dots { display: flex; gap: 4px; margin-top: 8px; }
+.goal-dots .dot { width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--axis); }
+.goal-dots .dot.met { background: var(--cat-1); border-color: var(--cat-1); }
+.goal-dots .dot.miss { background: var(--wash); }
+.goal-dots .dot.open { border-style: dashed; }
+.goal-dots .dot.none { border-color: transparent; background: var(--wash); opacity: .4; }
+.wb-form { display: grid; gap: 14px; }
+.wb-form fieldset { border: 1px solid var(--ring); border-radius: 10px; padding: 10px 14px 12px; margin: 0; display: grid; gap: 8px; }
+.wb-form legend { font-weight: 600; padding: 0 4px; }
+.wb-form .sub { margin: 0; }
+.wb-form input { font: inherit; color: var(--ink); background: var(--page); border: 1px solid var(--ring); border-radius: 8px; padding: 4px 6px; }
+.wb-form input[type=checkbox] { padding: 0; }
+.wb-form .num { width: 64px; }
+.wb-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.wb-row .grow { flex: 1 1 140px; min-width: 0; }
+.wb-days { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; }
+.wb-form label.check { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.wb-form .buttons { display: flex; }
 .insights-grid { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
 .timeline.sleep .lane { overflow: hidden; }
 .sleep-len { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); font-size: 11px; color: var(--ink-2); }

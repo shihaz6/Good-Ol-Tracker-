@@ -24,6 +24,7 @@ from collections import Counter
 import categorize
 import db
 import focus
+import wellbeing
 
 log = logging.getLogger("tracker")
 
@@ -220,6 +221,9 @@ def worker() -> None:
     conn = db.connect()
     while True:
         try:
+            started = wellbeing.scheduled_focus(conn)
+            if started:
+                log.info("scheduled focus started: %s", started.get("label"))
             check(conn)
             handoff()
         except Exception:

@@ -103,6 +103,14 @@
         </details>
       </section>
 
+      <section class="card wide" id="goals-card">
+        <div class="card-head">
+          <h2>Goals</h2>
+          <a class="linkbtn" href="#rules2-card">Change goals</a>
+        </div>
+        <div id="goals"></div>
+      </section>
+
       <section class="card wide" id="find-card">
         <h2>Search what you've read</h2>
         <p class="sub">Pages, videos and your past searches. Finds by words and, with Voyage, by meaning.</p>
@@ -253,6 +261,39 @@
           </ol>
         </details>
         <p class="formmsg" id="phone-msg" role="status"></p>
+      </section>
+
+      <section class="card wide" id="rules2-card">
+        <h2>Limits, bedtime, schedule and goals</h2>
+        <p class="sub">App limits and bedtime are enforced on the phone (it keeps a copy, so they work away
+          from the PC too). Scheduled focus blocks sites on the PC and apps on the phone.</p>
+        <form id="wb-form" class="wb-form">
+          <fieldset>
+            <legend>Daily app limits (phone)</legend>
+            <p class="sub">Warning at 80%, then the app is blocked until midnight (one "5 more minutes" a day).</p>
+            <div id="wb-limits"></div>
+            <button type="button" class="linkbtn" id="wb-add-limit">+ Add a limit</button>
+          </fieldset>
+          <fieldset>
+            <legend>Bedtime (phone)</legend>
+            <label class="check"><input type="checkbox" name="bed_enabled"> Lock social and video apps from
+              <input type="time" name="bed_start"> to <input type="time" name="bed_end"></label>
+            <label class="inline">Wind-down reminder <input type="number" name="bed_wind" min="0" max="120" class="num"> min before</label>
+          </fieldset>
+          <fieldset>
+            <legend>Scheduled focus</legend>
+            <p class="sub">Starts a focus session automatically. Ending one early doesn't restart it.</p>
+            <div id="wb-schedules"></div>
+            <button type="button" class="linkbtn" id="wb-add-schedule">+ Add a time</button>
+          </fieldset>
+          <fieldset>
+            <legend>Daily goals</legend>
+            <div id="wb-goals"></div>
+            <button type="button" class="linkbtn" id="wb-add-goal">+ Add a goal</button>
+          </fieldset>
+          <div class="buttons"><button type="submit" class="primary">Save</button></div>
+        </form>
+        <p class="formmsg" id="wb-msg" role="status"></p>
       </section>
 
       <section class="card" id="email-card">

@@ -30,9 +30,13 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+from datetime import date, datetime
+
+import categorize
 import db
 import focus
 import nudge
+import wellbeing
 
 log =logging.getLogger("tracker")
 
@@ -95,7 +99,8 @@ def _touch(dev_id, **fields) -> None:
 
 def devices() -> list:
     return [{"id": k, "name": d.get("name"), "paired": d.get("paired"), "last_sync": d.get("last_sync"),
-             "last_ip": d.get("last_ip"), "version": d.get("version"), "behind": d.get("behind")}
+             "last_ip": d.get("last_ip"), "version": d.get("version"), "behind": d.get("behind"),
+             "adult_filter": d.get("adult_filter"), "blocking": d.get("blocking")}
             for k, d in _load()["devices"].items()]
 
 
@@ -222,7 +227,9 @@ def sync(conn, dev_id: str, body: dict, now=None) -> dict:
     focus.record_phone_blocks(conn, body.get("focus_blocks") or [])
     client = body.get("client") if isinstance(body.get("client"), dict) else {}
     _touch(dev_id, last_sync=now, version=str(client.get("version", ""))[:20],
-           behind=client.get("behind") if isinstance(client.get("behind"), (int, float)) else None)
+           behind=client.get("behind") if isinstance(client.get("behind"), (int, float)) else None,
+           adult_filter=str(client.get("private_dns") or "")[:100] or None,
+           blocking=bool(client.get("blocking")))
     return {"ok": True, "sessions": len(rows), "unlocks": len(u_rows), **state_for_phone(conn, now)}
 
 
@@ -233,7 +240,28 @@ def state_for_phone(conn, now=None) -> dict:
     cur = focus.current(conn, now)
     return {"focus": {k: cur[k] for k in ("id", "start", "end", "label")} if cur else None,
             "phone_block": focus.phone_block(conn, now=now),
-            "nudge": nudge.take("phone")}
+            "nudge": nudge.take("phone"),
+            "wellbeing": wellbeing.for_phone(),   # app limits, bedtime, scheduled focus
+            "today": _today(conn, now)}           # for the app's screen + home-screen widget
+
+
+_today_cache = {"ts": 0.0, "value": None}
+
+
+def _today(conn, now):
+    """Today's productive time + goals (cached for a minute: the phone asks every minute)."""
+    if now - _today_cache["ts"] < 60 and _today_cache["value"] is not None:
+        return _today_cache["value"]
+    g = wellbeing.goals(conn, now=now)
+    value = {"productive": next((x["today"] for x in g if x["kind"] == "productive_min"), None),
+             "goals": [{k: x[k] for k in ("label", "today", "target", "met_today", "over", "streak", "kind")} for x in g]}
+    if value["productive"] is None:
+        rules = categorize.Rules()
+        d0 = datetime.combine(date.fromtimestamp(now), datetime.min.time()).timestamp()
+        value["productive"] = round(sum(it.seconds for it in categorize.categorise(conn, d0, now, rules)
+                                        if it.category in rules.productive))
+    _today_cache.update(ts=now, value=value)
+    return value
 
 
 def focus_action(conn, body: dict, now=None) -> dict:

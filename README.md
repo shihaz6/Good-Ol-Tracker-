@@ -235,6 +235,29 @@ times** to the tracker. Never notifications, messages or anything inside apps.
 - **Emails:** phone time (vs the previous period), unlocks, top phone apps, pickups during
   study and average sleep.
 
+### Limits, bedtime, scheduled focus, goals, widget, adult filter (phone)
+
+Set on the dashboard card **Limits, bedtime, schedule and goals** (`data\wellbeing.json`,
+`desktop/wellbeing.py`); the phone gets them with every sync and keeps a copy, so they also
+work away from the PC.
+
+- **Daily app limits:** e.g. Facebook 60 min, Instagram 30 min (the defaults). Notification
+  at 80%, then blocked until midnight; one "5 more minutes" per app per day.
+- **Bedtime:** 23:30–06:00 by default. Social/video apps (the focus block list) lock; a
+  wind-down notification 30 min before; one "5 more minutes" per night.
+- **Scheduled focus:** days + times (e.g. weekdays 19:00–21:00). The PC starts it (blocks
+  sites + phone apps); if the PC is off the phone starts its own. Ending early sticks.
+- **Goals:** productive at least / phone at most / a category at most, per day. Dashboard
+  **Goals** card (today's progress, streak, last 14 days), the phone app, the widget and
+  emails. Days before a device was tracked don't count.
+- **Widget:** long-press the home screen → Widgets → Good ol Tracker: phone time and
+  unlocks, productive time, goals and a *Start 25-min focus* button.
+- **Adult filter on the phone:** Android **Private DNS** set to `family.cloudflare-dns.com`
+  (Cloudflare for Families). Covers all browsers and apps; nothing on screen is read. The app
+  shows whether it's on, helps set it up, warns if it gets switched off, and the dashboard's
+  Phone card shows its state. (A browser with its own custom "secure DNS" provider set would
+  bypass it.)
+
 ## Email reports (Gmail)
 
 Set up on the dashboard's **Email reports** card: your Gmail address, where to send,

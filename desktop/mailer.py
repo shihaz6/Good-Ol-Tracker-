@@ -26,6 +26,7 @@ import focus
 import insights
 import keys
 import weekly
+import wellbeing
 
 log = logging.getLogger("tracker")
 
@@ -176,6 +177,7 @@ def build_daily(conn, day: date, rules=None):
     if s["offline_seconds"]:
         stats.insert(2, ("Offline (logged)", _dur(s["offline_seconds"])))
     stats += _phone_rows(conn, day, day, rules)
+    stats += _goal_rows(conn, day, day, rules)
     cats = sorted(t["by_category"].items(), key=lambda kv: -kv[1])
     apps = [(a["name"], _dur(a["seconds"])) for a in s["top_apps"][:5]]
     topics = ", ".join(x["term"] for x in s["topics"][:10]) or "-"
@@ -190,6 +192,18 @@ def build_daily(conn, day: date, rules=None):
         f"<p><b>Topics:</b> {html.escape(topics)}</p>",
     ])
     return subject, text, body
+
+
+def _goal_rows(conn, start: date, end: date, rules) -> list:
+    """Each daily goal: on how many finished days of the period it was met, and the streak."""
+    n = (end - start).days + 1
+    rows = []
+    for g in wellbeing.goals(conn, today=end, rules=rules):
+        days = [h for h in g["history"][-n:] if h["met"] is not None and (h["final"] or h["met"])]
+        if days:
+            rows.append((f"Goal: {g['label']}",
+                         f"met {sum(1 for h in days if h['met'])} of {len(days)} days · streak {g['streak']}"))
+    return rows
 
 
 def _phone_rows(conn, start: date, end: date, rules, delta=None) -> list:
@@ -256,6 +270,7 @@ def build_period(conn, start: date, end: date, ai_text: str | None, ai_note: str
             line += f" · {f['blocked']} blocked site visits"
         compare.append(("Focus sessions", line))
     compare += _phone_rows(conn, start, end, rules, d)
+    compare += _goal_rows(conn, start, end, rules)
     cats = sorted(now_p["by_category"].items(), key=lambda kv: -kv[1])
     if ai_text:
         ai_block = ai_text

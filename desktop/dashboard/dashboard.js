@@ -1144,6 +1144,7 @@ async function load() {
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     render(data);
     loadInsights(start, end);
+    loadWellbeing();
     loadAI();
     loadHealth();
     updateExports(start, end);
@@ -1482,6 +1483,150 @@ $("#nudge-snooze").addEventListener("click", async () => {
   } catch (err) { say("#nudge-msg", err.message, true); }
 });
 
+// ------------------------------------------------------------------ goals + limits/bedtime/schedule
+
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const wb = { data: null, dirty: false };
+
+async function loadWellbeing() {
+  try {
+    const res = await fetch("/api/wellbeing", { cache: "no-store" });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+    wb.data = d;
+    renderGoals(d.goals);
+    if (!wb.dirty && !$("#wb-form").contains(document.activeElement)) renderWbForm(d);
+  } catch { /* server down: the health strip says so */ }
+}
+
+function renderGoals(goals) {
+  if (!goals.length) { $("#goals").replaceChildren(empty("No goals yet. Add one below under \"Daily goals\".")); return; }
+  const list = el("div", "goals");
+  goals.forEach((g) => {
+    const row = el("div", "goal");
+    const head = el("div", "goal-head");
+    head.append(el("b", null, g.label));
+    let status;
+    if (g.kind === "productive_min") status = g.met_today ? "✓ Done today" : `${fmtDur(g.target - g.today)} to go`;
+    else status = g.over ? `✗ Over by ${fmtDur(g.today - g.target)}` : `✓ ${fmtDur(g.target - g.today)} left`;
+    head.append(el("span", g.over ? "goal-status bad" : "goal-status", status));
+    const track = el("div", "goal-track");
+    const fill = el("i");
+    fill.style.width = `${Math.min(100, (g.today / g.target) * 100)}%`;
+    if (g.over) fill.classList.add("over");
+    track.append(fill);
+    const meta = el("div", "goal-meta");
+    meta.append(el("span", null, `${fmtDur(g.today)} of ${fmtDur(g.target)} today`));
+    meta.append(el("span", "streak", g.streak ? `🔥 ${g.streak} day${g.streak === 1 ? "" : "s"} in a row` : "No streak yet"));
+    const dots = el("div", "goal-dots");
+    dots.setAttribute("aria-label", "Last 14 days");
+    g.history.forEach((h) => {
+      const dt = el("span", h.met == null ? "dot none" : h.met ? "dot met" : (h.final ? "dot miss" : "dot open"));
+      const day = new Date(`${h.date}T12:00`).toLocaleDateString([], { weekday: "short", day: "numeric" });
+      dt.title = `${day}: ${h.met == null ? "not tracked" : fmtDur(h.value) + (h.met ? " · met" : h.final ? " · missed" : " · so far")}`;
+      dots.append(dt);
+    });
+    row.append(head, track, meta, dots);
+    list.append(row);
+  });
+  $("#goals").replaceChildren(list);
+}
+
+function wbRow(...nodes) {
+  const r = el("div", "wb-row");
+  r.append(...nodes);
+  const rm = el("button", "linkbtn", "Remove");
+  rm.type = "button";
+  rm.addEventListener("click", () => { r.remove(); wb.dirty = true; });
+  r.append(rm);
+  return r;
+}
+
+function limitRow(pkg = "", minutes = 30) {
+  const sel = el("select", "catsel");
+  sel.name = "pkg";
+  sel.setAttribute("aria-label", "App");
+  const apps = wb.data?.phone_apps || [];
+  if (pkg && !apps.some((a) => a.pkg === pkg)) sel.append(new Option(pkg, pkg));
+  apps.forEach((a) => sel.append(new Option(`${a.label}`, a.pkg, false, a.pkg === pkg)));
+  const num = el("input", "num");
+  Object.assign(num, { type: "number", name: "minutes", min: 1, max: 720, value: minutes });
+  num.setAttribute("aria-label", "Minutes per day");
+  return wbRow(sel, num, document.createTextNode("min a day"));
+}
+
+function scheduleRow(sc = { days: [0, 1, 2, 3, 4], start: "19:00", end: "21:00", label: "" }) {
+  const days = el("span", "wb-days");
+  DAYS.forEach((d, i) => {
+    const l = el("label", "check");
+    const cb = el("input");
+    Object.assign(cb, { type: "checkbox", name: "day", value: i, checked: sc.days.includes(i) });
+    l.append(cb, document.createTextNode(d));
+    days.append(l);
+  });
+  const s = el("input"); Object.assign(s, { type: "time", name: "start", value: sc.start });
+  const e = el("input"); Object.assign(e, { type: "time", name: "end", value: sc.end });
+  const lab = el("input", "grow"); Object.assign(lab, { name: "label", value: sc.label || "", placeholder: "Label (optional)", maxLength: 60 });
+  return wbRow(days, s, document.createTextNode("to"), e, lab);
+}
+
+function goalRow(g = { kind: "productive_min", minutes: 180 }) {
+  const kind = el("select", "catsel");
+  kind.name = "kind";
+  Object.entries(wb.data?.goal_kinds || {}).forEach(([k, v]) => kind.append(new Option(v, k, false, k === g.kind)));
+  const cat = catSelect(g.category || "", { label: "Category" });
+  cat.name = "category";
+  cat.hidden = g.kind !== "category_max";
+  kind.addEventListener("change", () => { cat.hidden = kind.value !== "category_max"; });
+  const h = el("input", "num"); Object.assign(h, { type: "number", name: "hours", min: 0, max: 24, value: Math.floor(g.minutes / 60) });
+  const m = el("input", "num"); Object.assign(m, { type: "number", name: "mins", min: 0, max: 59, value: g.minutes % 60 });
+  return wbRow(kind, cat, h, document.createTextNode("h"), m, document.createTextNode("min"));
+}
+
+function renderWbForm(d) {
+  const s = d.settings;
+  $("#wb-limits").replaceChildren(...Object.entries(s.limits).map(([p, m]) => limitRow(p, m)));
+  $("#wb-schedules").replaceChildren(...s.schedules.map((sc) => scheduleRow(sc)));
+  $("#wb-goals").replaceChildren(...s.goals.map((g) => goalRow(g)));
+  const f = $("#wb-form").elements;
+  f.bed_enabled.checked = s.bedtime.enabled;
+  f.bed_start.value = s.bedtime.start;
+  f.bed_end.value = s.bedtime.end;
+  f.bed_wind.value = s.bedtime.wind_down;
+}
+
+$("#wb-form").addEventListener("input", () => { wb.dirty = true; });
+$("#wb-add-limit").addEventListener("click", () => { $("#wb-limits").append(limitRow("", 30)); wb.dirty = true; });
+$("#wb-add-schedule").addEventListener("click", () => { $("#wb-schedules").append(scheduleRow()); wb.dirty = true; });
+$("#wb-add-goal").addEventListener("click", () => { $("#wb-goals").append(goalRow()); wb.dirty = true; });
+$("#wb-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target.elements;
+  const limits = {};
+  $("#wb-limits").querySelectorAll(".wb-row").forEach((r) => {
+    const pkg = r.querySelector("[name=pkg]").value;
+    if (pkg) limits[pkg] = Number(r.querySelector("[name=minutes]").value);
+  });
+  const schedules = [...$("#wb-schedules").querySelectorAll(".wb-row")].map((r) => ({
+    days: [...r.querySelectorAll("[name=day]:checked")].map((c) => Number(c.value)),
+    start: r.querySelector("[name=start]").value, end: r.querySelector("[name=end]").value,
+    label: r.querySelector("[name=label]").value,
+  }));
+  const goals = [...$("#wb-goals").querySelectorAll(".wb-row")].map((r) => {
+    const kind = r.querySelector("[name=kind]").value;
+    const g = { kind, minutes: Number(r.querySelector("[name=hours]").value || 0) * 60 + Number(r.querySelector("[name=mins]").value || 0) };
+    if (kind === "category_max") g.category = r.querySelector("[name=category]").value;
+    return g;
+  });
+  try {
+    await post("/api/wellbeing", { limits, schedules, goals, bedtime: {
+      enabled: f.bed_enabled.checked, start: f.bed_start.value, end: f.bed_end.value, wind_down: Number(f.bed_wind.value || 0) } });
+    wb.dirty = false;
+    say("#wb-msg", "Saved. The phone picks it up on its next sync (within a minute while it's in use).");
+    loadWellbeing();
+  } catch (err) { say("#wb-msg", `Couldn't save: ${err.message}`, true); }
+});
+
 // ------------------------------------------------------------------ sleep + phone while studying
 
 async function loadInsights(start, end) {
@@ -1642,7 +1787,13 @@ async function loadPhone() {
         });
         let last = d.last_sync ? fmtWhen(d.last_sync, Date.now() / 1000 - d.last_sync > 20 * 3600) : "not yet";
         if (d.last_sync && Date.now() / 1000 - d.last_sync > 3600) last += " (not reachable since)";
-        return [d.name + (d.version ? ` · app ${d.version}` : ""), last, rm];
+        const extras = [];
+        extras.push(d.blocking ? "app blocking on" : "app blocking off");
+        extras.push(d.adult_filter ? `adult filter on (${d.adult_filter})` : "adult filter off");
+        const name = el("div");
+        name.append(el("div", null, d.name + (d.version ? ` · app ${d.version}` : "")),
+          el("div", d.adult_filter && d.blocking ? "scope" : "scope warn", extras.join(" · ")));
+        return [name, last, rm];
       })));
   }
   // Poll quickly while a pairing request is waiting, slowly otherwise.

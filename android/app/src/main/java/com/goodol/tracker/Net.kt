@@ -181,7 +181,9 @@ object Net {
                 .put("unlocks", JSONArray().apply { if (i == 0) data.unlocks.forEach { put(it) } })
                 .put("focus_blocks", if (i == 0) JSONArray(prefs.pendingBlocks) else JSONArray())
                 .put("client", JSONObject().put("version", BuildConfig.VERSION_NAME)
-                    .put("behind", (now - from) / 1000))
+                    .put("behind", (now - from) / 1000)
+                    .put("blocking", Focus.blockingEnabled(context))
+                    .put("private_dns", Dns.filterHost(context) ?: JSONObject.NULL))
             val (code, res) = request(pc, "/phone/sync", body, prefs.token)
             if (code == 401) { prefs.forget(); throw NetError("The PC no longer knows this phone. Connect again.") }
             if (code != 200) throw NetError(res.optString("error", "PC answered $code"))

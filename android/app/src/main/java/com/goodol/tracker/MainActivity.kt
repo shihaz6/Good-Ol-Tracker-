@@ -204,6 +204,12 @@ fun Screen(resumeTick: Int) {
             // Focus mode
             FocusCard(tick) { tick++ }
 
+            // Goals, limits, bedtime (settings come from the PC dashboard)
+            RulesCard(tick)
+
+            // Adult content filter (Private DNS)
+            AdultFilterCard(resumeTick)
+
             // Blocking + alerts setup
             val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { tick++ }
             val blocking = Focus.blockingEnabled(ctx)
@@ -330,6 +336,89 @@ fun FocusCard(tick: Int, onChange: () -> Unit) {
                 }
             }
             msg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
+    }
+}
+
+@Composable
+fun RulesCard(tick: Int) {
+    val ctx = LocalContext.current
+    val prefs = remember { Prefs(ctx) }
+    var usage by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    LaunchedEffect(tick) { usage = withContext(Dispatchers.IO) { runCatching { Guard.usageToday(ctx, fresh = true) }.getOrDefault(emptyMap()) } }
+    val s = Guard.settings(prefs)
+    val today = runCatching { org.json.JSONObject(prefs.today) }.getOrDefault(org.json.JSONObject())
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Today's rules", fontWeight = FontWeight.SemiBold)
+            today.optJSONArray("goals")?.let { goals ->
+                for (i in 0 until goals.length()) {
+                    val g = goals.getJSONObject(i)
+                    val target = g.optLong("target").coerceAtLeast(1)
+                    val v = g.optLong("today")
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(g.optString("label"))
+                        Text(buildString {
+                            append(if (g.optBoolean("over")) "✗ " else if (g.optBoolean("met_today")) "✓ " else "")
+                            append("${Guard.fmt(v * 1000)} / ${Guard.fmt(target * 1000)}")
+                            if (g.optInt("streak") > 0) append("  🔥${g.optInt("streak")}")
+                        }, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    LinearProgressIndicator(progress = { (v.toFloat() / target).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().height(4.dp),
+                        color = if (g.optBoolean("over")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+                }
+            }
+            s.optJSONObject("limits")?.let { lim ->
+                val keys = lim.keys().asSequence().toList()
+                if (keys.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text("Daily limits", style = MaterialTheme.typography.labelLarge)
+                    keys.forEach { pkg ->
+                        val limMs = lim.optInt(pkg) * 60_000L
+                        val used = usage[pkg] ?: 0L
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(Usage.label(ctx, pkg))
+                            Text("${Guard.fmt(used)} / ${Guard.fmt(limMs)}",
+                                color = if (used >= limMs) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+            s.optJSONObject("bedtime")?.let { b ->
+                Text(if (b.optBoolean("enabled")) "Bedtime: ${b.optString("start")}–${b.optString("end")} (social and video apps lock)"
+                    else "Bedtime mode is off", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text("Change these on the PC dashboard (\"Limits, bedtime, schedule and goals\").",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+fun AdultFilterCard(resumeTick: Int) {
+    val ctx = LocalContext.current
+    var host by remember { mutableStateOf<String?>(null) }
+    var other by remember { mutableStateOf<String?>(null) }
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(resumeTick) { host = Dns.filterHost(ctx); other = Dns.activeHost(ctx) }
+    StepCard("🛡", "Adult content filter", done = host != null) {
+        if (host != null) {
+            Text("On. Adult sites are blocked in every browser and app on this phone (via $host).")
+        } else {
+            Text("Blocks adult sites in every browser and app, using Android's Private DNS with a family filter. " +
+                "Nothing on your screen is read.")
+            other?.let { Text("Private DNS is set to $it right now, which doesn't filter adult content.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+            Spacer(Modifier.height(6.dp))
+            Text("1. Copy the address below.\n2. Settings → Connection & sharing → Private DNS → Private DNS provider hostname.\n3. Paste it and Save.",
+                style = MaterialTheme.typography.bodySmall)
+            Text(Dns.FAMILY_HOST, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(vertical = 6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { Dns.copyHost(ctx); copied = true }) { Text(if (copied) "Copied" else "Copy address") }
+                OutlinedButton(onClick = { Dns.openSettings(ctx) }) { Text("Open settings") }
+            }
         }
     }
 }

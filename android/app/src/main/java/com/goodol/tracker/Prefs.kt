@@ -84,11 +84,44 @@ class Prefs(context: Context) {
         get() = p.getString("pending_blocks", "[]") ?: "[]"
         set(v) = p.edit().putString("pending_blocks", v).apply()
 
+    /** Limits, bedtime and schedules from the PC (JSON), kept so they work offline. */
+    var wellbeing: String
+        get() = p.getString("wellbeing", null) ?: DEFAULT_WELLBEING
+        set(v) = p.edit().putString("wellbeing", v).apply()
+
+    /** Today's PC numbers + goals from the last sync (JSON), for the screen and widget. */
+    var today: String
+        get() = p.getString("today", "{}") ?: "{}"
+        set(v) = p.edit().putString("today", v).apply()
+    var todayAtMs: Long
+        get() = p.getLong("today_at", 0L)
+        set(v) = p.edit().putLong("today_at", v).apply()
+
+    /** One-off things already done, e.g. "warn:com.facebook.katana:2026-11-08" (kept 3 days). */
+    fun once(key: String): Boolean {
+        val set = p.getStringSet("once", emptySet())!!.toMutableSet()
+        if (key in set) return false
+        val today = java.time.LocalDate.now()
+        set.removeAll { k -> k.substringAfterLast('|').let { d -> runCatching { java.time.LocalDate.parse(d) }.getOrNull()?.isBefore(today.minusDays(3)) ?: true } }
+        set.add(key)
+        p.edit().putStringSet("once", set).apply()
+        return true
+    }
+
+    fun graceUntil(key: String): Long = p.getLong("grace:$key", 0L)
+    fun setGrace(key: String, until: Long) = p.edit().putLong("grace:$key", until).apply()
+
+    var dnsWasOn: Boolean
+        get() = p.getBoolean("dns_was_on", false)
+        set(v) = p.edit().putBoolean("dns_was_on", v).apply()
+
     var lastNudgeId: Long
         get() = p.getLong("last_nudge", 0L)
         set(v) = p.edit().putLong("last_nudge", v).apply()
 
     companion object {
+        const val DEFAULT_WELLBEING = """{"limits":{"com.facebook.katana":60,"com.instagram.android":30},
+            "bedtime":{"enabled":true,"start":"23:30","end":"06:00","wind_down":30},"schedules":[]}"""
         val DEFAULT_BLOCKED = setOf(
             "com.facebook.katana", "com.facebook.lite", "com.instagram.android", "com.zhiliaoapp.musically",
             "com.ss.android.ugc.trill", "com.twitter.android", "com.snapchat.android", "com.reddit.frontpage",
