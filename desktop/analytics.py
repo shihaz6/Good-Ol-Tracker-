@@ -161,6 +161,10 @@ def _right_now(conn, rules):
     return out
 
 
+def _unlocks(conn, start, end) -> int:
+    return conn.execute("SELECT COUNT(*) FROM phone_unlocks WHERE ts >= ? AND ts < ?", (start, end)).fetchone()[0]
+
+
 def _rule_info(rules, name: str, kind: str) -> dict:
     """Which rule section an app/site row edits, and its current rule (None = no rule yet).
     Browser exes aren't editable: their time is split by site instead."""
@@ -168,16 +172,28 @@ def _rule_info(rules, name: str, kind: str) -> dict:
         return {"rule_section": "sites", "rule": rules.site_rule(name)}
     if kind == "app" and name.lower() not in categorize.BROWSERS:
         return {"rule_section": "apps", "rule": rules.apps.get(name.lower())}
+    if kind == "phone":  # name = Android package
+        return {"rule_section": "phone_apps", "rule": rules.phone_apps.get(name.lower())}
     return {"rule_section": None, "rule": None}
 
 
-def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
+DEVICES = ("all", "pc", "phone")
+
+
+def summary(conn, start_day: date, end_day: date, rules=None, device: str = "all") -> dict:
     rules = rules or categorize.Rules()
     if end_day < start_day:
         start_day, end_day = end_day, start_day
     days = [start_day + timedelta(days=i) for i in range((end_day - start_day).days + 1)]
     start, end = _midnight(start_day), _midnight(end_day + timedelta(days=1))
-    items = sorted(categorize.categorise(conn, start, end, rules), key=lambda it: it.start)
+    all_items = sorted(categorize.categorise(conn, start, end, rules), key=lambda it: it.start)
+    phone_secs = sum(it.seconds for it in all_items if it.source == "phone")
+    if device == "phone":
+        items = [it for it in all_items if it.source == "phone"]
+    elif device == "pc":
+        items = [it for it in all_items if it.source != "phone"]
+    else:
+        items = all_items
     productive = rules.productive
 
     by_cat = defaultdict(float)
@@ -186,7 +202,8 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
     apps = defaultdict(lambda: {"seconds": 0.0, "cats": Counter(), "kind": "app"})
     pages = defaultdict(lambda: {"seconds": 0.0, "title": "", "domain": "", "category": "", "via": ""})
     unmatched = defaultdict(float)
-    unsure = defaultdict(lambda: {"seconds": 0.0, "urls": set()})
+    labels = {}
+    unsure =defaultdict(lambda: {"seconds": 0.0, "urls": set()})
 
     for it in items:
         secs = it.seconds
@@ -196,16 +213,20 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
             if key in per_day:
                 per_day[key][it.category] += part
             by_hour[dt.hour][it.category] += part
-        a = apps[(it.app, it.source)]
+        key = it.title if it.source == "phone" else it.app  # phone: package name (the rule key)
+        a = apps[(key, it.source)]
         a["seconds"] += secs
         a["cats"][it.category] += secs
-        a["kind"] = {"browser": "site", "manual": "offline"}.get(it.source, "app")
+        a["kind"] = {"browser": "site", "manual": "offline", "phone": "phone"}.get(it.source, "app")
+        a["label"] = it.app
         if it.url:
             p = pages[it.url]
             p["seconds"] += secs
             p["title"], p["domain"], p["category"], p["via"] = it.title, it.app, it.category, it.via
         if not it.matched:
-            unmatched[("site" if it.source == "browser" else "app", it.app)] += secs
+            kind = {"browser": "site", "phone": "phone"}.get(it.source, "app")
+            unmatched[(kind, key)] += secs
+            labels[(kind, key)] = it.app
         elif it.category == rules.fallback["content"]:
             u = unsure[(it.app, it.title)]
             u["seconds"] += secs
@@ -282,7 +303,7 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
         "offline_seconds": round(active - pc_active),
         "timeline": _timeline(items, days),
         "top_apps": [
-            {"name": name, "kind": a["kind"], "seconds": round(a["seconds"]),
+            {"name": name, "label": a["label"], "kind": a["kind"], "seconds": round(a["seconds"]),
              "category": a["cats"].most_common(1)[0][0], **_rule_info(rules, name, a["kind"])}
             for (name, _), a in sorted(apps.items(), key=lambda kv: -kv[1]["seconds"])[:15]
         ],
@@ -307,8 +328,12 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
             for ts, engine, domain, query in search_rows[:200]
         ],
         "search_count": len(search_rows),
-        "unmatched": [{"kind": k, "name": n, "seconds": round(s), "suggestion": suggested.get((k, n.lower()))}
+        "unmatched": [{"kind": k, "name": n, "label": labels.get((k, n), n), "seconds": round(s),
+                       "suggestion": suggested.get((k, n.lower()))}
                       for (k, n), s in sorted(unmatched.items(), key=lambda kv: -kv[1])[:10]],
+        "device": device,
+        "phone": {"seconds": round(phone_secs), "unlocks": _unlocks(conn, start, end),
+                  "paired": bool(conn.execute("SELECT 1 FROM sessions WHERE source = 'phone' LIMIT 1").fetchone())},
         "ai_judge": {**ai_judge.counts(conn), "last_error": ai_judge.status["last_error"],
                      "groq_key": bool(keys.load_key("groq"))},
         "unsure": [{"site": site, "title": title, "seconds": round(v["seconds"]), "urls": sorted(v["urls"])[:20],

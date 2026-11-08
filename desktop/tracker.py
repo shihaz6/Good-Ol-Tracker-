@@ -24,6 +24,7 @@ import db
 import keys
 import mailer
 import nudge
+import phone
 import server
 import weekly
 import win32
@@ -196,6 +197,7 @@ def main():
     log.info("logging to %s", db.DB_PATH)
     threading.Thread(target=background_worker, name="background", daemon=True).start()
     threading.Thread(target=nudge.worker, name="nudge", daemon=True).start()
+    phone.start()
     try:
         Tracker(conn, state).run()
     except KeyboardInterrupt:

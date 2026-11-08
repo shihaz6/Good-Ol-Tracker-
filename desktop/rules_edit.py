@@ -16,7 +16,8 @@ import time
 import categorize
 import db
 
-SECTIONS = ("apps", "sites", "channels", "pages")
+SECTIONS = ("apps", "sites", "channels", "pages", "phone_apps")
+_PACKAGE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$")
 MAX_HISTORY = 30
 MAX_CHANGES = 25
 _lock = threading.Lock()
@@ -56,6 +57,10 @@ def normalize_key(section: str, key) -> str:
         if not key.startswith(("http://", "https://")):
             raise RuleError("page rules need a full http(s) URL")
         key = db.canonical_url(key)
+    elif section == "phone_apps":
+        key = key.lower()
+        if not _PACKAGE.match(key):
+            raise RuleError(f"not an Android package name: {key!r} (e.g. com.instagram.android)")
     elif len(key) > 200:
         raise RuleError("name is too long")
     return key
@@ -184,7 +189,8 @@ def _apply(text: str, section: str, key: str, category) -> str:
 
 
 def _describe(section, key, category):
-    what = {"apps": "App", "sites": "Site", "channels": "Channel", "pages": "Page"}[section]
+    what = {"apps": "App", "sites": "Site", "channels": "Channel", "pages": "Page",
+            "phone_apps": "Phone app"}[section]
     target = "by page content" if category == categorize.CONTENT else category
     return f"{what} {key} → {target}" if category is not None else f"{what} {key}: rule removed"
 

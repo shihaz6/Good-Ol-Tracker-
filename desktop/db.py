@@ -162,6 +162,15 @@ CREATE TABLE IF NOT EXISTS name_judge (
     PRIMARY KEY (kind, name)
 );
 
+-- Phone (Android companion app). App time goes into sessions (source 'phone',
+-- app = package name, title = app name, client_id = 'phone:<device>:<package>@<start ms>').
+CREATE TABLE IF NOT EXISTS phone_unlocks (
+    device  TEXT NOT NULL,
+    ts      REAL NOT NULL,
+    PRIMARY KEY (device, ts)
+);
+CREATE INDEX IF NOT EXISTS idx_phone_unlocks_ts ON phone_unlocks(ts);
+
 -- Weekly AI summaries (Groq). payload = exactly what was sent.
 CREATE TABLE IF NOT EXISTS summaries (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -191,6 +191,29 @@ it carries on.
   (needs **v0.6.3**). If Brave isn't open (a game, Spotify), a plain Windows notification
   without buttons appears instead.
 
+## Phone (Android)
+
+`android/` is a small companion app. It reads Android's own app-usage history (what
+Digital Wellbeing uses) and sends **which app was in front from when to when, plus unlock
+times** to the tracker. Never notifications, messages or anything inside apps.
+
+- **Build:** `cd android` then `C:\Android\gradle-8.9\bin\gradle.bat --offline assembleRelease`
+  (JDK 17 + SDK 35 from `C:\Android`). The APK is `android\GoodOlTracker.apk`.
+- **Set up once on the PC** (admin PowerShell): `phone_firewall.ps1`. Opens TCP 47323 + UDP
+  47324 on **Private** networks only. Then set the phone's hotspot network to Private in
+  Windows (Settings → Network & internet → Wi-Fi → the hotspot → Network profile type).
+- **Pair:** in the app allow *Usage access*, tap *Connect to PC*; allow the request with
+  the same 4-digit code on the dashboard's **Phone** card.
+- **Sync:** every ~15 min in the background, over the hotspot/Wi-Fi link (no mobile data,
+  no internet). If the PC is off it catches up later: Android keeps about a week.
+- **Finding the PC:** last known address first, else a UDP broadcast on every local
+  network. When paired, the PC's answer must prove it knows the phone's token.
+- **Xiaomi/Redmi:** allow *Autostart*, set battery to *No restrictions* and lock the app in
+  Recents (buttons in the app), or syncs only happen when you open it.
+- Phone time is categorised by `phone_apps` in `categories.json` (Android package →
+  category); unknown apps get Groq suggestions. Overlap with PC time counts once, as phone
+  time. Dashboard: *All / PC / Phone* filter and a Phone tile with unlocks.
+
 ## Email reports (Gmail)
 
 Set up on the dashboard's **Email reports** card: your Gmail address, where to send,

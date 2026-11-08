@@ -25,6 +25,11 @@
       <button type="button" data-range="30">Last 30 days</button>
     </div>
     <label class="day">Day <input type="date" id="day"></label>
+    <div class="seg" role="group" aria-label="Device">
+      <button type="button" data-device="all">All</button>
+      <button type="button" data-device="pc">PC</button>
+      <button type="button" data-device="phone">Phone</button>
+    </div>
     <details class="menu" id="export-menu">
       <summary class="ghost">Export</summary>
       <div class="menu-list">
@@ -214,6 +219,25 @@
         <div id="offline-list"></div>
       </section>
 
+      <section class="card" id="phone-card">
+        <h2>Phone</h2>
+        <p class="sub">The Good ol Tracker Android app sends which apps you used and when (never what's
+          inside them) to this PC over your hotspot or Wi-Fi. It catches up on anything missed.</p>
+        <div id="phone-pending" aria-live="polite"></div>
+        <div id="phone-devices"></div>
+        <details>
+          <summary>How to connect a phone</summary>
+          <ol class="steps">
+            <li>Install the app (<code>android\GoodOlTracker.apk</code>) and allow <b>Usage access</b> when it asks.</li>
+            <li>Connect the PC to the phone's hotspot (or the same Wi-Fi), then tap <b>Connect to PC</b> in the app.</li>
+            <li>A request with a 4-digit code appears here: allow it if the code matches the phone.</li>
+            <li>Once, on the PC: set the hotspot network to <b>Private</b> (Settings → Network &amp; internet →
+              Wi-Fi → the hotspot → Network profile type) and run <code>phone_firewall.ps1</code> as administrator.</li>
+          </ol>
+        </details>
+        <p class="formmsg" id="phone-msg" role="status"></p>
+      </section>
+
       <section class="card" id="email-card">
         <h2>Email reports</h2>
         <p class="sub" id="email-sub"></p>
@@ -259,6 +283,7 @@
             <option value="sites">Site</option>
             <option value="apps">App (.exe)</option>
             <option value="channels">YouTube channel / author</option>
+            <option value="phone_apps">Phone app (package)</option>
           </select>
           <input name="key" placeholder="e.g. chess.com" required class="grow" aria-label="Name">
           <select name="category" aria-label="Category" required></select>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The app only ever talks to your PC on the local network (plain HTTP, token-protected).
+     It has no other servers, so allowing cleartext only affects that connection. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

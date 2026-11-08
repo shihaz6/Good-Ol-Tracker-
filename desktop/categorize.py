@@ -8,6 +8,7 @@ split using the extension's visits (site + scanned page), so an hour of brave.ex
 becomes e.g. 40 min Study (YouTube lecture) + 20 min Social (LinkedIn).
 """
 
+import dataclasses
 import json
 import re
 from dataclasses import dataclass
@@ -55,12 +56,14 @@ class Rules:
         self.sites = {k.lower(): v for k, v in raw.get("sites", {}).items()}
         self.channels = {k.lower(): v for k, v in raw.get("channels", {}).items()}
         self.pages = dict(raw.get("pages", {}))  # exact page URL -> category (set from the dashboard)
+        self.phone_apps = {k.lower(): v for k, v in raw.get("phone_apps", {}).items()}  # Android package -> category
         self.descriptions = {k: [str(t) for t in v] for k, v in raw.get("descriptions", {}).items() if v}
         self.keywords = {
             cat: re.compile(r"(?<!\w)(?:" + "|".join(re.escape(w) for w in words) + r")(?!\w)", re.I)
             for cat, words in raw.get("keywords", {}).items() if words
         }
         used = [*self.apps.values(), *self.sites.values(), *self.channels.values(), *self.pages.values(),
+                *self.phone_apps.values(),
                 *self.keywords, *self.fallback.values(), *self.productive, *self.descriptions]
         unknown = sorted({c for c in used if c not in self.categories and c != CONTENT})
         if unknown:
@@ -98,6 +101,14 @@ class Rules:
         if rule:
             return rule, True
         cat = self.classify_text([(title, 3)])
+        return (cat, True) if cat else (self.fallback["app"], False)
+
+    def classify_phone(self, package: str, label: str):
+        """Phone apps: a phone_apps rule (by package name), else keywords in the app's name."""
+        rule = self.phone_apps.get(package.lower())
+        if rule in self.categories:
+            return rule, True
+        cat = self.classify_text([(label, 3)])
         return (cat, True) if cat else (self.fallback["app"], False)
 
     def _page_fields(self, title, page):
@@ -199,10 +210,50 @@ def classify_search(rules: Rules, query: str, ai_category: str | None) -> str:
 def categorise(conn, start: float, end: float, rules: Rules | None = None) -> list[Item]:
     """All activity between start and end as categorised, non-overlapping Items
     (PC activity + offline time you logged), sorted by start."""
-    items = _categorise_pc(conn, start, end, rules or Rules())
+    rules = rules or Rules()
+    phone = _phone_items(conn, start, end, rules)
+    items = _minus(_categorise_pc(conn, start, end, rules), phone) + phone
     spans = sorted((it.start, it.end) for it in items)
     items += _manual_items(conn, start, end, spans)
     return sorted(items, key=lambda it: it.start)
+
+
+def _phone_items(conn, start, end, rules) -> list[Item]:
+    """Phone app time from the Android companion app (sessions with source 'phone';
+    app = package name, title = the app's name)."""
+    rows = conn.execute(
+        "SELECT start_ts, end_ts, app, title FROM sessions WHERE source = 'phone' AND end_ts > ? AND start_ts < ?"
+        " ORDER BY start_ts", (start, end)).fetchall()
+    items = []
+    for s, e, pkg, label in rows:
+        s, e = max(s, start), min(e, end)
+        if e > s:
+            cat, matched = rules.classify_phone(pkg, label)
+            items.append(Item(s, e, cat, label or pkg, pkg, "phone", matched))
+    return items
+
+
+def _minus(items, phone) -> list[Item]:
+    """PC time with the phone's time cut out. When both overlap you were on the phone (the
+    PC only stays "active" for up to 2 min without input, or while a video plays), so each
+    second is counted once, as phone time."""
+    if not phone:
+        return items
+    spans = sorted((p.start, p.end) for p in phone)
+    out, j = [], 0
+    for it in sorted(items, key=lambda it: it.start):
+        while j < len(spans) and spans[j][1] <= it.start:
+            j += 1
+        cursor, k = it.start, j
+        while k < len(spans) and spans[k][0] < it.end:
+            s, e = spans[k]
+            if s > cursor:
+                out.append(dataclasses.replace(it, start=cursor, end=s))
+            cursor = max(cursor, e)
+            k += 1
+        if cursor < it.end:
+            out.append(dataclasses.replace(it, start=cursor, end=it.end) if cursor != it.start else it)
+    return out
 
 
 def _categorise_pc(conn, start: float, end: float, rules: Rules) -> list[Item]:

@@ -25,6 +25,8 @@ Endpoints:
   POST /api/ai/dismiss {kind, name}   reject a Groq site/app suggestion
   GET /api/nudge · POST /api/nudge/settings · POST /api/nudge/snooze   distraction alerts
   POST /nudge {action: snooze}         (token) the extension's Snooze button
+  GET /api/phone · POST /api/phone/decide {id, allow} · POST /api/phone/unpair {id}
+       (the phone itself talks to phone.py on its own port, see there)
   GET  /api/find?q=&meaning=1          -> search pages you've read + past searches
   GET  /api/focus / POST /api/focus/start {minutes,label} / /api/focus/stop / /api/focus/settings
   POST /focus {action:start|stop, minutes, label}  (extension popup; needs token)
@@ -55,6 +57,7 @@ import focus
 import keys
 import mailer
 import nudge
+import phone
 import rules_edit
 import weekly
 
@@ -208,6 +211,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/find": lambda: self._find(parse_qs(query)),
             "/api/focus": self._focus_status,
             "/api/nudge": lambda: self._json(200, nudge.status()),
+            "/api/phone": lambda: self._json(200, phone.status()),
         }
         if path in routes:
             if not self._dashboard_ok(api=True):
@@ -477,9 +481,12 @@ class Handler(BaseHTTPRequestHandler):
                 start = end - timedelta(days=MAX_RANGE_DAYS - 1)
         except ValueError:
             return self._send(400, {"error": "start/end must be YYYY-MM-DD"})
+        device = params.get("device", ["all"])[0]
+        if device not in analytics.DEVICES:
+            return self._send(400, {"error": "device must be all, pc or phone"})
         conn = db.connect()
         try:
-            data = analytics.summary(conn, start, end)
+            data = analytics.summary(conn, start, end, device=device)
         except ValueError as exc:  # e.g. a typo in categories.json
             log.warning("summary failed: %r", exc)
             return self._send(500, {"error": f"categories.json: {exc}"})
@@ -499,7 +506,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/rules/undo": self._rules_undo,
             "/api/ai/dismiss": self._ai_dismiss,
             "/api/nudge/settings": lambda b: self._json(200, {"ok": True, "settings": nudge.save_settings(b)}),
-            "/api/nudge/snooze": lambda b: self._json(200, {"ok": True, "snoozed_until": nudge.snooze(b.get("minutes"))}),
+            "/api/phone/decide": lambda b: self._json(200, phone.decide(str(b.get("id", "")), bool(b.get("allow")))),
+            "/api/phone/unpair": lambda b: (phone.unpair(str(b.get("id", ""))), self._json(200, {"ok": True}))[1],
+            "/api/nudge/snooze": lambda b:self._json(200, {"ok": True, "snoozed_until": nudge.snooze(b.get("minutes"))}),
             "/api/focus/start": lambda b: self._json(200, self._focus_do({**b, "action": "start"})),
             "/api/focus/stop": lambda b: self._json(200, self._focus_do({"action": "stop"})),
             "/api/focus/settings": self._focus_settings,

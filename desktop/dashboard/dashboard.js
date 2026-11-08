@@ -4,7 +4,7 @@
 const REFRESH_MS = 30000;
 const $ = (sel) => document.querySelector(sel);
 
-const state = { range: "today", day: null, data: null, timer: null, editApps: false, editPages: false };
+const state = { range: "today", day: null, device: "all", data: null, timer: null, editApps: false, editPages: false };
 
 // ------------------------------------------------------------------ helpers
 
@@ -232,6 +232,12 @@ function renderTiles(d) {
     tile("Deep focus sessions", String(f.deep_count), `${fmtDur(f.deep_threshold)}+ each · ${fmtDur(f.deep_seconds)} total`),
     tile("Switches per hour", d.switches.per_hour ?? "–", `${d.switches.count} app or site switches`),
   );
+  if (d.phone?.paired) {
+    const p = d.phone;
+    $("#tiles").append(tile("Phone", fmtDur(p.seconds),
+      `${p.unlocks} unlock${p.unlocks === 1 ? "" : "s"}` + (days > 1 ? ` · ${fmtDur(p.seconds / days)}/day` : "")
+      + (d.device === "pc" ? " · not in the numbers above" : "")));
+  }
 }
 
 function renderCategories(d) {
@@ -412,6 +418,7 @@ function renderTimeline(d) {
 // ------------------------------------------------------------------ editing categories
 
 const CONTENT = "content";
+const SECTION_FOR = { site: "sites", app: "apps", phone: "phone_apps" };
 
 // A <select> of categories. `current` is preselected; "" shows a "Choose…" prompt.
 function catSelect(current, { content = false, label = "Category" } = {}) {
@@ -470,7 +477,8 @@ $("#rule-form").addEventListener("submit", (ev) => {
     .then(() => { if (!$("#rules-msg").classList.contains("bad")) f.key.value = ""; });
 });
 $("#rule-form").elements.section.addEventListener("change", (e) => {
-  const ph = { sites: "e.g. chess.com", apps: "e.g. Spotify.exe", channels: "e.g. Neso Academy" };
+  const ph = { sites: "e.g. chess.com", apps: "e.g. Spotify.exe", channels: "e.g. Neso Academy",
+    phone_apps: "e.g. com.instagram.android" };
   $("#rule-form").elements.key.placeholder = ph[e.target.value];
   fillRuleFormCategories();
 });
@@ -501,7 +509,7 @@ function renderAppsEditor(d) {
       pick = catSelect(a.rule || "", { content: a.rule_section === "sites", label: `Category for ${a.name}` });
       pick.addEventListener("change", () => saveRules([{ section: a.rule_section, key: a.name, category: pick.value }], pick));
     }
-    return [a.name, a.kind, fmtDur(a.seconds), pick];
+    return [a.kind === "phone" ? a.label : a.name, a.kind, fmtDur(a.seconds), pick];
   });
   const wrap = el("div");
   wrap.append(el("p", "sub", "Sets a rule for the whole app or site. For YouTube and similar, keep \"By page content\" so each video is judged on its own."),
@@ -516,7 +524,7 @@ function renderApps(d) {
   const grid = el("div", "bars thin");
   d.top_apps.forEach((a) => {
     const name = el("div", "name");
-    name.append(swatch(a.category), el("span", null, a.name));
+    name.append(swatch(a.category), el("span", null, a.kind === "phone" ? a.label : a.name));
     name.append(el("span", "tag", a.kind));
     const track = el("div", "track");
     const bar = el("div", "bar");
@@ -525,7 +533,7 @@ function renderApps(d) {
     track.append(bar);
     const val = el("div", "val");
     val.append(el("b", null, fmtDur(a.seconds)));
-    const tip = { title: a.name, rows: [{ cat: a.category, label: a.category, value: fmtDur(a.seconds) }] };
+    const tip = { title: a.kind === "phone" ? `${a.label} (phone)` : a.name, rows: [{ cat: a.category, label: a.category, value: fmtDur(a.seconds) }] };
     [name, track, val].forEach((n) => setTip(n, tip));
     grid.append(name, track, val);
   });
@@ -619,13 +627,13 @@ function renderRules(d) {
     parts.push(table([{ label: "Name", cls: "title" }, { label: "Time", num: true }, { label: "Suggested" }, { label: "" }],
       suggested.map((u) => {
         const s = u.suggestion;
-        const section = u.kind === "site" ? "sites" : "apps";
+        const section = SECTION_FOR[u.kind];
         const label = s.category === CONTENT ? "By page content" : s.category;
         const what = el("div");
         what.append(s.category === CONTENT ? el("span", "cat", label) : catLabel(s.category));
         what.append(el("div", "scope", `${s.reason || ""} (${Math.round(s.confidence * 100)}% sure)`.trim()));
         const name = el("div");
-        name.append(el("span", null, u.name), el("span", "tag", u.kind));
+        name.append(el("span", null, u.label || u.name), el("span", "tag", u.kind));
         const actions = el("div", "suggest-actions");
         const yes = el("button", "ghost small", "Accept");
         const no = el("button", "linkbtn", "Reject");
@@ -650,10 +658,10 @@ function renderRules(d) {
     parts.push(el("h3", "mini", "No rule yet"));
     parts.push(table([{ label: "Name", cls: "title" }, { label: "Type" }, { label: "Time", num: true }, { label: "Set category" }],
       unmatched.map((u) => {
-        const section = u.kind === "site" ? "sites" : "apps";
-        const sel = catSelect("", { content: section === "sites", label: `Category for ${u.name}` });
+        const section = SECTION_FOR[u.kind];
+        const sel = catSelect("", { content: section === "sites", label: `Category for ${u.label || u.name}` });
         sel.addEventListener("change", () => saveRules([{ section, key: u.name, category: sel.value }], sel));
-        return [u.name, u.kind, fmtDur(u.seconds), sel];
+        return [u.label || u.name, u.kind, fmtDur(u.seconds), sel];
       })));
   }
   if (d.unsure.length) {
@@ -1131,7 +1139,7 @@ async function load() {
   const [start, end] = rangeDates();
   document.body.classList.add("loading"); // keep the old render visible, just dimmed
   try {
-    const res = await fetch(`/api/summary?start=${start}&end=${end}`, { cache: "no-store" });
+    const res = await fetch(`/api/summary?start=${start}&end=${end}&device=${state.device}`, { cache: "no-store" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     render(data);
@@ -1164,15 +1172,23 @@ function autoLoad() {
 }
 
 function syncControls() {
-  document.querySelectorAll(".seg button").forEach((b) => {
+  document.querySelectorAll(".seg button[data-range]").forEach((b) => {
     b.setAttribute("aria-pressed", String(!state.day && b.dataset.range === state.range));
+  });
+  document.querySelectorAll(".seg button[data-device]").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.device === state.device));
   });
   $("#day").value = state.day || "";
 }
 
-document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
+document.querySelectorAll(".seg button[data-range]").forEach((b) => b.addEventListener("click", () => {
   state.range = b.dataset.range;
   state.day = null;
+  syncControls();
+  load();
+}));
+document.querySelectorAll(".seg button[data-device]").forEach((b) => b.addEventListener("click", () => {
+  state.device = b.dataset.device;
   syncControls();
   load();
 }));
@@ -1465,6 +1481,65 @@ $("#nudge-snooze").addEventListener("click", async () => {
   } catch (err) { say("#nudge-msg", err.message, true); }
 });
 
+// ------------------------------------------------------------------ phone
+
+let phoneTimer = null;
+async function loadPhone() {
+  clearTimeout(phoneTimer);
+  let p;
+  try {
+    const res = await fetch("/api/phone", { cache: "no-store" });
+    p = await res.json();
+    if (!res.ok) throw new Error(p.error);
+  } catch { phoneTimer = setTimeout(loadPhone, 15000); return; }
+
+  const pend = p.pending.map((r) => {
+    const box = el("div", "pair-request");
+    box.append(el("div", null, `${r.name} wants to connect`),
+      el("div", "pair-code", r.code),
+      el("div", "scope", `Allow only if the phone shows the same code · from ${r.ip}`));
+    const yes = el("button", "primary small", "Allow");
+    const no = el("button", "linkbtn", "Deny");
+    yes.type = no.type = "button";
+    const decide = async (allow) => {
+      yes.disabled = no.disabled = true;
+      try {
+        await post("/api/phone/decide", { id: r.id, allow });
+        say("#phone-msg", allow ? `${r.name} is connected. It sends its first data within a minute.` : "Denied.");
+      } catch (err) { say("#phone-msg", err.message, true); }
+      loadPhone();
+    };
+    yes.addEventListener("click", () => decide(true));
+    no.addEventListener("click", () => decide(false));
+    const actions = el("div", "suggest-actions");
+    actions.append(yes, no);
+    box.append(actions);
+    return box;
+  });
+  $("#phone-pending").replaceChildren(...pend);
+
+  if (!p.devices.length) {
+    $("#phone-devices").replaceChildren(empty("No phone connected yet."));
+  } else {
+    $("#phone-devices").replaceChildren(table(
+      [{ label: "Phone", cls: "title" }, { label: "Last sync" }, { label: "" }],
+      p.devices.map((d) => {
+        const rm = el("button", "linkbtn", "Disconnect");
+        rm.type = "button";
+        rm.addEventListener("click", async () => {
+          if (!confirm(`Disconnect ${d.name}? Its data stays; it just stops syncing until you connect it again.`)) return;
+          try { await post("/api/phone/unpair", { id: d.id }); loadPhone(); }
+          catch (err) { say("#phone-msg", err.message, true); }
+        });
+        let last = d.last_sync ? fmtWhen(d.last_sync, Date.now() / 1000 - d.last_sync > 20 * 3600) : "not yet";
+        if (d.last_sync && Date.now() / 1000 - d.last_sync > 3600) last += " (not reachable since)";
+        return [d.name + (d.version ? ` · app ${d.version}` : ""), last, rm];
+      })));
+  }
+  // Poll quickly while a pairing request is waiting, slowly otherwise.
+  phoneTimer = setTimeout(loadPhone, p.pending.length ? 2000 : 15000);
+}
+
 $("#offline-form").elements.date.value = isoDay(new Date());
 $("#offline-form").elements.date.max = isoDay(new Date());
 
@@ -1475,3 +1550,4 @@ loadEmail();
 loadRecentRules();
 loadFocus();
 loadNudge();
+loadPhone();

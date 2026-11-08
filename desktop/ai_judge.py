@@ -145,6 +145,16 @@ def name_candidates(conn, rules, now=None) -> list:
                 " GROUP BY title ORDER BY SUM(end_ts - start_ts) DESC LIMIT 3", (source, key, since))]
             out.append((kind, key, {"type": "website" if kind == "site" else "Windows program",
                                     "name": name, "example_titles": [_clip(t, 100) for t in titles]}))
+    # Phone apps: app = package, title = the app's name. Only names go out (no titles exist).
+    for pkg, label, _ in conn.execute(
+            "SELECT lower(app), MAX(title), SUM(end_ts - start_ts) AS secs FROM sessions"
+            " WHERE source = 'phone' AND end_ts > ? GROUP BY lower(app) HAVING secs >= ?"
+            " ORDER BY secs DESC LIMIT 200", (since, MIN_SECONDS)):
+        if ("phone", pkg) in dismissed_or_done or pkg in rules.phone_apps:
+            continue
+        if sitelists.never_send_app(pkg) or sitelists.never_send_app(label or ""):
+            continue
+        out.append(("phone", pkg, {"type": "Android phone app", "name": label or pkg, "package": pkg}))
     return out
 
 
@@ -238,7 +248,8 @@ def run_batch(conn, rules, request=None, now=None) -> dict:
         if names and requests < MAX_REQUESTS:
             chunk = names[:BATCH]
             system = _system_prompt(rules, name_cats + [categorize.CONTENT],
-                                    'Items are whole websites or Windows programs. Use "content" for a '
+                                    'Items are whole websites, Windows programs or Android phone apps. '
+                                    'Use "content" (websites only) for a '
                                     "website whose pages differ a lot in category (video sites, AI chats, "
                                     "search engines, forums), so each page is judged on its own. Use Other for "
                                     "Windows system tools and pop-ups.\n")
@@ -278,6 +289,8 @@ def suggestions(conn, rules) -> dict:
             continue
         if kind == "app" and name in rules.apps:
             continue
+        if kind == "phone" and (name in rules.phone_apps or cat == categorize.CONTENT):
+            continue
         out[(kind, name)] = {"category": cat, "confidence": round(conf, 2), "reason": reason}
     return out
 
@@ -295,8 +308,8 @@ def page_reasons(conn, urls) -> dict:
 
 
 def dismiss(conn, kind: str, name: str) -> None:
-    if kind not in ("site", "app") or not name:
-        raise ValueError("kind must be site or app, with a name")
+    if kind not in ("site", "app", "phone") or not name:
+        raise ValueError("kind must be site, app or phone, with a name")
     cur = conn.execute("UPDATE name_judge SET dismissed = 1 WHERE kind = ? AND name = ?", (kind, name.lower()))
     conn.commit()
     if not cur.rowcount:
