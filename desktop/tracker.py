@@ -22,6 +22,8 @@ import win32
 INTERVAL = 5            # seconds between samples
 IDLE_THRESHOLD = 120    # seconds without input before you count as AFK
 MAX_GAP = INTERVAL * 3  # a bigger gap between samples (sleep, hang) breaks the session
+PAGE_TEXT_DAYS = 60     # full page text older than this is deleted (titles/time kept)
+PURGE_EVERY = 3600      # seconds between retention clean-ups
 
 BROWSERS = {"brave.exe", "chrome.exe", "msedge.exe"}
 
@@ -74,9 +76,18 @@ class Tracker:
         self.current = {"id": sid, "app": app, "title": title, "start": start, "end": now}
         log.debug("%-22s %s", app, title[:90])
 
+    def purge(self):
+        n = db.purge_page_text(self.conn, PAGE_TEXT_DAYS)
+        if n:
+            log.info("retention: removed page text from %d pages older than %d days", n, PAGE_TEXT_DAYS)
+
     def run(self):
+        last_purge = 0.0
         while True:
             try:
+                if time.time() - last_purge >= PURGE_EVERY:
+                    last_purge = time.time()
+                    self.purge()
                 self.tick()
             except Exception:  # never let one bad sample kill the tracker
                 log.exception("tick failed")

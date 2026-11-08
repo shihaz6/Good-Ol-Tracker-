@@ -31,7 +31,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_end   ON sessions(end_ts);
 CREATE TABLE IF NOT EXISTS pages (
     url         TEXT PRIMARY KEY,     -- canonical URL (matches sessions.url)
     domain      TEXT NOT NULL,
-    kind        TEXT NOT NULL,        -- 'youtube' | 'article' | 'search'
+    kind        TEXT NOT NULL,        -- 'youtube' | 'article' | 'page' (any site)
     scanned_ts  REAL NOT NULL,
     title       TEXT,
     author      TEXT,                 -- channel / author when available
@@ -39,7 +39,20 @@ CREATE TABLE IF NOT EXISTS pages (
     headings    TEXT,                 -- newline separated
     body        TEXT                  -- capped main text
 );
+
+CREATE TABLE IF NOT EXISTS searches (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         REAL NOT NULL,         -- unix seconds
+    engine     TEXT NOT NULL,         -- 'Brave Search', 'YouTube', or the site's domain
+    domain     TEXT NOT NULL,         -- site the search was made on
+    query      TEXT NOT NULL,
+    url        TEXT NOT NULL,
+    client_id  TEXT UNIQUE            -- dedupes re-sends from the extension
+);
+CREATE INDEX IF NOT EXISTS idx_searches_ts ON searches(ts);
 """
+
+PAGE_KINDS = ("youtube", "article", "page", "search")
 
 # Hard caps so a misbehaving client can't balloon the database.
 LIMITS = {"title": 300, "author": 200, "description": 2000, "headings": 3000, "body": 3000}
@@ -59,6 +72,8 @@ def _migrate(conn) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
     if "client_id" not in cols:  # added in step 2: dedupes visits the extension re-sends
         conn.execute("ALTER TABLE sessions ADD COLUMN client_id TEXT")
+    if "scroll_pct" not in cols:  # browser only: deepest scroll position reached, 0-100
+        conn.execute("ALTER TABLE sessions ADD COLUMN scroll_pct REAL")
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_client ON sessions(client_id)"
     )
@@ -120,22 +135,61 @@ def insert_browser_visits(conn, visits) -> int:
             if not (0 <= end - start <= MAX_VISIT_SECONDS) or end > time.time() + 300:
                 continue  # nonsense timestamps; drop rather than corrupt totals
             url = canonical_url(_http_url(v["url"]))
+            scroll = v.get("scroll")
+            scroll = None if scroll is None else max(0.0, min(100.0, float(scroll)))
             rows.append((start, end, domain_of(url), _text(v.get("title"), LIMITS["title"]),
-                         url, str(v["id"])[:64]))
+                         url, str(v["id"])[:64], scroll))
         except (KeyError, TypeError, ValueError):
             continue
     # The extension re-sends the in-progress visit every heartbeat with the same id,
     # so this updates one live row in place instead of adding duplicates.
     conn.executemany(
-        """INSERT INTO sessions (start_ts, end_ts, app, title, source, url, client_id)
-           VALUES (?, ?, ?, ?, 'browser', ?, ?)
+        """INSERT INTO sessions (start_ts, end_ts, app, title, source, url, client_id, scroll_pct)
+           VALUES (?, ?, ?, ?, 'browser', ?, ?, ?)
            ON CONFLICT(client_id) DO UPDATE SET
-             end_ts = MAX(sessions.end_ts, excluded.end_ts),
-             title  = excluded.title""",
+             end_ts     = MAX(sessions.end_ts, excluded.end_ts),
+             title      = excluded.title,
+             scroll_pct = MAX(COALESCE(sessions.scroll_pct, 0), COALESCE(excluded.scroll_pct, 0))""",
         rows,
     )
     conn.commit()
     return len(rows)
+
+
+def insert_searches(conn, searches) -> int:
+    rows = []
+    for s in searches:
+        try:
+            url = _http_url(s["url"]).split("#")[0]
+            query = s["query"].strip()
+            ts = float(s["ts"])
+            if not query or ts > time.time() + 300:
+                continue
+            domain = domain_of(url)
+            rows.append((ts, _text(s.get("engine"), 100) or domain, domain, query[:500], url,
+                         str(s["id"])[:64]))
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+    conn.executemany(
+        "INSERT OR IGNORE INTO searches (ts, engine, domain, query, url, client_id)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def purge_page_text(conn, days: float) -> int:
+    """Retention: drop full page text older than `days`. Title/author/URL are kept,
+    so time and categories for old visits still work."""
+    cutoff = time.time() - days * 86400
+    cur = conn.execute(
+        "UPDATE pages SET description = NULL, headings = NULL, body = NULL"
+        " WHERE scanned_ts < ? AND (description IS NOT NULL OR headings IS NOT NULL OR body IS NOT NULL)",
+        (cutoff,),
+    )
+    conn.commit()
+    return cur.rowcount
 
 
 def upsert_pages(conn, pages) -> int:
@@ -144,7 +198,7 @@ def upsert_pages(conn, pages) -> int:
         try:
             url = canonical_url(_http_url(p["url"]))
             kind = p.get("kind")
-            if kind not in ("youtube", "article", "search"):
+            if kind not in PAGE_KINDS:
                 continue
             rows.append((
                 url, domain_of(url), kind, float(p.get("ts") or time.time()),

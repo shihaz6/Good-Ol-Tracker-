@@ -79,6 +79,26 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(self.r.classify_browser("google.com", "sql normalization - Google Search", None),
                          ("Study", True))
 
+    def test_broad_phrases_dont_make_everything_study(self):
+        for title in ("How to cook perfect rice", "Learn to skateboard in 10 minutes",
+                      "Of course I bought it"):
+            self.assertNotEqual(self.r.classify_browser("youtube.com", "", {"title": title})[0],
+                                "Study", title)
+
+    def test_programming_videos_are_study_errors_are_coding(self):
+        fireship = {"title": "React in 100 seconds", "author": "Fireship"}
+        self.assertEqual(self.r.classify_browser("youtube.com", "", fireship)[0], "Study")
+        err = {"title": "Fix Python error: ModuleNotFoundError"}
+        self.assertEqual(self.r.classify_browser("youtube.com", "", err)[0], "Coding")
+
+    def test_google_account_pages_not_unsure(self):
+        self.assertEqual(self.r.classify_browser("accounts.google.com", "Sign in", None), ("Other", True))
+        self.assertEqual(self.r.classify_browser("maps.google.com", "Maps", None), ("Browsing", True))
+
+    def test_brave_search_page_judged_by_query(self):
+        self.assertEqual(self.r.classify_browser("search.brave.com", "dbms normalization - Brave Search",
+                                                 None)[0], "Study")
+
     def test_whole_words_only(self):
         # "lab" must not match inside "label"/"collaborate"
         self.assertIsNone(self.r.classify_text([("label collaborate", 3)]))
@@ -122,6 +142,63 @@ class SplitTest(unittest.TestCase):
         add_desktop(conn, -50, 50, "Code.exe", "x")
         items = categorize.categorise(conn, 0, 1000)
         self.assertEqual([(it.start, it.end) for it in items], [(0, 50)])
+
+
+class PageContentTest(unittest.TestCase):
+    def test_unknown_site_categorised_by_scanned_content(self):
+        r = categorize.Rules()
+        page = {"title": "Understanding 3NF", "body": "database normalization explained with sql examples"}
+        self.assertEqual(r.classify_browser("someblog.dev", "Understanding 3NF", page), ("Study", True))
+        # no scan and a vague title: still flagged for a rule
+        self.assertEqual(r.classify_browser("someblog.dev", "Home", None), ("Browsing", False))
+
+    def test_generic_page_kind_accepted(self):
+        conn = memory_db()
+        n = db.upsert_pages(conn, [{"url": "https://someblog.dev/post", "kind": "page", "title": "t", "body": "b"}])
+        self.assertEqual(n, 1)
+
+    def test_scroll_depth_keeps_the_maximum(self):
+        conn = memory_db()
+        v = {"id": "v1", "start": 0, "end": 10, "url": "https://a.com/x", "title": "t"}
+        db.insert_browser_visits(conn, [{**v, "scroll": 40}])
+        db.insert_browser_visits(conn, [{**v, "end": 20, "scroll": 85}])
+        db.insert_browser_visits(conn, [{**v, "end": 30, "scroll": 10}])    # scrolled back up
+        db.insert_browser_visits(conn, [{**v, "end": 40, "scroll": None}])  # older extension
+        db.insert_browser_visits(conn, [{**v, "id": "v2", "scroll": 250}])  # clamped
+        rows = conn.execute("SELECT client_id, scroll_pct FROM sessions ORDER BY client_id").fetchall()
+        self.assertEqual(rows, [("v1", 85.0), ("v2", 100.0)])
+
+    def test_retention_drops_old_text_keeps_titles(self):
+        import time
+        conn = memory_db()
+        old, new = time.time() - 61 * 86400, time.time() - 59 * 86400
+        db.upsert_pages(conn, [
+            {"url": "https://a.com/old", "kind": "page", "ts": old, "title": "Old", "body": "old text",
+             "headings": "h", "description": "d"},
+            {"url": "https://a.com/new", "kind": "page", "ts": new, "title": "New", "body": "new text"},
+        ])
+        self.assertEqual(db.purge_page_text(conn, 60), 1)
+        self.assertEqual(db.purge_page_text(conn, 60), 0)  # idempotent
+        rows = conn.execute("SELECT title, description, headings, body FROM pages ORDER BY title").fetchall()
+        self.assertEqual(rows, [("New", "", "", "new text"), ("Old", None, None, None)])
+
+
+class SearchesTest(unittest.TestCase):
+    def test_insert_dedupes_and_validates(self):
+        conn = memory_db()
+        good = {"id": "s1", "ts": 100, "engine": "Brave Search", "query": "  java oop ",
+                "url": "https://search.brave.com/search?q=java+oop#frag"}
+        n = db.insert_searches(conn, [
+            good,
+            good,                                                   # re-send: ignored
+            {"id": "s2", "ts": 100, "query": "x", "url": "javascript:alert(1)"},  # bad url
+            {"id": "s3", "ts": 100, "query": "   ", "url": "https://a.com/?q="},  # empty
+            {"id": "s4", "ts": 100, "url": "https://a.com/?q=x"},                # no query
+        ])
+        rows = conn.execute("SELECT engine, domain, query, url FROM searches").fetchall()
+        self.assertEqual(rows, [("Brave Search", "search.brave.com", "java oop",
+                                 "https://search.brave.com/search?q=java+oop")])
+        self.assertEqual(n, 2)  # both copies of the good one passed validation; one was stored
 
 
 if __name__ == "__main__":

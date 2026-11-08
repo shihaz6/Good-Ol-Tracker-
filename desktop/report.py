@@ -116,8 +116,18 @@ def main():
     desktop = conn.execute(query, ("desktop", day_start, day_end)).fetchall()
     browser = conn.execute(query, ("browser", day_start, day_end)).fetchall()
     pages = conn.execute(
-        "SELECT kind, domain, title, author FROM pages WHERE scanned_ts >= ? AND scanned_ts < ?"
-        " ORDER BY scanned_ts DESC",
+        "SELECT kind, domain, title, author, length(COALESCE(body, '')) FROM pages"
+        " WHERE scanned_ts >= ? AND scanned_ts < ? ORDER BY scanned_ts DESC",
+        (day_start, day_end),
+    ).fetchall()
+    scroll = {
+        (app, title): pct for app, title, pct in conn.execute(
+            "SELECT app, title, MAX(scroll_pct) FROM sessions WHERE source = 'browser'"
+            " AND end_ts > ? AND start_ts < ? AND scroll_pct IS NOT NULL GROUP BY app, title",
+            (day_start, day_end))
+    }
+    searches = conn.execute(
+        "SELECT ts, engine, query FROM searches WHERE ts >= ? AND ts < ? ORDER BY ts DESC",
         (day_start, day_end),
     ).fetchall()
     items = categorize.categorise(conn, day_start, day_end, rules) if rules else []
@@ -145,13 +155,30 @@ def main():
         by_site, by_page, btotal = totals(browser, day_start, day_end)
         print(f"Browser (from extension)   {fmt(btotal).strip()} across {len(by_site)} sites\n")
         print_ranked("By site", by_site, btotal, 15)
-        print_ranked("Top 10 pages", by_page, btotal, 10, width=16)
+        print("Top 10 pages                         (read = deepest scroll)")
+        for (site, title), secs in sorted(by_page.items(), key=lambda kv: -kv[1])[:10]:
+            pct = scroll.get((site, title))
+            read = f"{pct:3.0f}%" if pct is not None else "   -"
+            print(f"  {fmt(secs)}  {read}  {site[:16]:<16} {title[:60]}")
+        print()
+
+    if searches:
+        print(f"Searches ({len(searches)})")
+        for ts, engine, query in searches[:30]:
+            cat = (rules.classify_text([(query, 3)]) if rules else None) or "-"
+            print(f"  {datetime.fromtimestamp(ts):%H:%M}  {cat:<13} {engine[:16]:<16} {query[:60]}")
+        if len(searches) > 30:
+            print(f"  ... and {len(searches) - 30} more")
+        print()
 
     if pages:
-        print(f"Scanned pages ({len(pages)})")
-        for kind, domain, title, author in pages[:15]:
+        with_text = sum(1 for p in pages if p[4])
+        print(f"Pages read ({len(pages)}, {with_text} with full text)")
+        for kind, domain, title, author, chars in pages[:15]:
             extra = f"  [{author}]" if author else ""
-            print(f"  {kind:<8} {domain:<14} {(title or '')[:60]}{extra}")
+            print(f"  {kind:<8} {domain[:18]:<18} {chars:>5} ch  {(title or '')[:50]}{extra}")
+        if len(pages) > 15:
+            print(f"  ... and {len(pages) - 15} more")
         print()
 
 

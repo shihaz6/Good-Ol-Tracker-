@@ -8,7 +8,7 @@ Security:
 
 Endpoints:
   GET  /health  -> {"ok": true}            (used by the extension's options page)
-  POST /ingest  -> {"visits": [...], "pages": [...], "media": bool}
+  POST /ingest  -> {"visits": [...], "pages": [...], "searches": [...], "media": bool}
 """
 
 import json
@@ -130,17 +130,19 @@ class Handler(BaseHTTPRequestHandler):
 def ingest(payload: dict, state: SharedState) -> dict:
     visits = payload.get("visits") or []
     pages = payload.get("pages") or []
-    if not isinstance(visits, list) or not isinstance(pages, list):
-        raise ValueError("visits/pages must be lists")
+    searches = payload.get("searches") or []
+    if not all(isinstance(x, list) for x in (visits, pages, searches)):
+        raise ValueError("visits/pages/searches must be lists")
     conn = db.connect()
     try:
         n_visits = db.insert_browser_visits(conn, visits)
         n_pages = db.upsert_pages(conn, pages)
+        n_searches = db.insert_searches(conn, searches)
     finally:
         conn.close()
     if "media" in payload:
         state.media_heartbeat(bool(payload["media"]))
-    return {"visits": n_visits, "pages": n_pages}
+    return {"visits": n_visits, "pages": n_pages, "searches": n_searches}
 
 
 def start(token: str, state: SharedState) -> ThreadingHTTPServer:

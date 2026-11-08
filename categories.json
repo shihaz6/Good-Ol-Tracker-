@@ -138,10 +138,17 @@
     "open.spotify.com": "Entertainment",
     "music.youtube.com": "Entertainment",
 
+    "accounts.google.com": "Other",
+    "myaccount.google.com": "Other",
+    "maps.google.com": "Browsing",
+
     "youtube.com": "content",
     "medium.com": "content",
     "reddit.com": "content",
     "google.com": "content",
+    "search.brave.com": "content",
+    "bing.com": "content",
+    "duckduckgo.com": "content",
     "claude.ai": "content",
     "chatgpt.com": "content",
     "gemini.google.com": "content"
@@ -155,21 +162,23 @@
     "Abdul Bari": "Study",
     "CS50": "Study",
     "Khan Academy": "Study",
-    "Fireship": "Coding"
+    "Fireship": "Study"
   },
 
   "keywords": {
     "Study": [
-      "lecture", "tutorial", "course", "full course", "crash course", "lesson", "explained",
-      "exam", "assignment", "lab", "revision", "past paper", "syllabus", "quiz", "module",
-      "semester", "university", "learn", "beginners", "for beginners", "how to",
+      "lecture", "tutorial", "full course", "crash course", "online course", "lesson", "explained",
+      "exam", "assignment", "revision", "past paper", "syllabus", "quiz",
+      "semester", "university", "for beginners",
       "algorithm", "algorithms", "data structures", "database", "dbms", "sql", "normalization",
-      "oop", "object oriented", "java", "python", "c++", "javascript",
+      "oop", "object oriented", "java", "python", "c++", "c#", "javascript", "typescript",
+      "html", "css", "react", "node.js",
       "mathematics", "math", "calculus", "statistics", "discrete", "physics", "networking"
     ],
     "Coding": [
-      "code", "coding", "debug", "bug", "error", "exception", "stack trace", "api",
-      "deploy", "repo", "repository", "git", "github", "commit", "pull request",
+      "code", "coding", "debug", "bug", "error", "exception", "stack trace", "traceback",
+      "syntax error", "syntaxerror", "typeerror", "modulenotfounderror", "nullpointerexception",
+      "api", "deploy", "repo", "repository", "git", "github", "commit", "pull request",
       "extension", "script", "compile", "localhost", "npm", "pip", "docker"
     ],
     "Work": [

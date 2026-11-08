@@ -47,12 +47,32 @@ Only one tracker runs at a time; extra launches exit immediately.
 | `sessions` | `source='desktop'`: every foreground window. This is the time total. |
 |            | `source='browser'`: active tab per site (breakdown of browser time).  |
 | `pages`    | Scanned content, one row per page (latest scan wins).                 |
+| `searches` | Every search: time, engine/site, query, URL.                          |
 
-Page content is read **only** on YouTube videos, Medium articles and Reddit threads
-(the extension has no permission to read any other site), and never on pages with a
-password field. Google searches store just the search text from the URL. Incognito
-is never tracked. To scan another site, add it to `SCAN_RULES` in
-`extension/background.js` **and** to `host_permissions` in `extension/manifest.json`.
+**Searches** are read from the URL, so they're captured on any site without page
+access: Brave Search, Google, Bing, DuckDuckGo, YouTube, GitHub, Stack Overflow,
+Reddit, Wikipedia, Amazon, Daraz, LinkedIn, X, plus any site using `?q=`, `?query=`,
+`?search=` or `?keyword=`. Paging through results or reloading within 10 minutes
+isn't counted again. Add a site in `extension/search.js`. The extension's options
+page has a **Pause** switch that stops all recording.
+
+**Page content** (title, description, headings, main text up to 3,000 characters):
+
+- Always on YouTube videos, Medium articles and Reddit threads.
+- On **every other site** once you tick *Read page content on all sites* in the
+  extension's options (Brave asks for permission; untick to revoke).
+- **Never:** text you type (inputs, text boxes, editable areas are removed before
+  reading), pages with password or card fields, incognito, and blocked sites. The
+  default block list is **WhatsApp, banks and password managers** (plus localhost, so
+  the tracker never reads its own pages). It's editable in the options page, and the
+  toolbar popup has a **Never read this site** button. Any hostname containing "bank"
+  is always skipped.
+- **Retention:** full page text is deleted after **60 days** (`PAGE_TEXT_DAYS` in
+  `desktop/tracker.py`); titles, URLs and time are kept.
+
+**Scroll depth:** every browser visit records how far down the page you got
+(`sessions.scroll_pct`, 0-100), shown as *read %* in the report's top pages.
+Pages that scroll inside a box instead of the whole window (e.g. Gmail) report less.
 
 ## Categories
 
@@ -69,7 +89,15 @@ How something gets its category:
 3. Nothing matched -> keywords on the window/tab title, else `Other` (apps) / `Browsing` (sites).
 
 The report lists **Not categorised yet** and **Unsure** items, the things worth adding
-rules for. Tests: `python -m unittest discover -s tests -v`
+rules for.
+
+## Tests
+
+```powershell
+python -m unittest discover -s tests -v   # categories, splitting, searches table
+node tests\test_search.js                 # search detection from URLs
+node tests\test_blocklist.js              # which sites' content is never read
+```
 
 ## Settings
 

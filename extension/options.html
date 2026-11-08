@@ -5,32 +5,55 @@
   <title>Good ol Tracker</title>
   <style>
     :root { color-scheme: light dark; }
-    body { font: 14px/1.5 system-ui, sans-serif; max-width: 560px; margin: 32px auto; padding: 0 16px; }
+    body { font: 14px/1.5 system-ui, sans-serif; max-width: 600px; margin: 32px auto; padding: 0 16px; }
     h1 { font-size: 20px; }
-    input { width: 100%; padding: 8px; font: inherit; box-sizing: border-box; }
+    h2 { font-size: 16px; margin-top: 28px; }
+    input[type=password], textarea { width: 100%; padding: 8px; font: inherit; box-sizing: border-box; }
+    textarea { font: 13px/1.4 ui-monospace, Consolas, monospace; height: 220px; }
     button { margin-top: 10px; padding: 7px 14px; font: inherit; cursor: pointer; }
+    label.switch { display: flex; gap: 8px; align-items: center; font-weight: 600; margin: 8px 0; }
     code { background: rgba(127,127,127,.15); padding: 1px 4px; border-radius: 3px; }
-    #status { margin-top: 14px; font-weight: 600; }
     .ok { color: #1a7f37; } .bad { color: #cf222e; }
+    .muted { opacity: .75; font-size: 13px; }
     ul { padding-left: 20px; }
   </style>
 </head>
 <body>
   <h1>Good ol Tracker</h1>
+
+  <h2>Connection</h2>
   <p>Paste the token from <code>data\token.txt</code> in the Good ol Tracker folder.
      The file is created the first time the desktop tracker runs.</p>
   <input id="token" type="password" placeholder="token" autocomplete="off">
   <button id="save">Save &amp; test connection</button>
-  <div id="status"></div>
-  <p id="queue"></p>
-  <h2 style="font-size:16px">What this extension reads</h2>
+  <div id="status" style="margin-top:12px;font-weight:600"></div>
+  <p id="queue" class="muted"></p>
+
+  <h2>Recording</h2>
+  <label class="switch"><input id="paused" type="checkbox"> Pause tracking (nothing is recorded while ticked)</label>
+  <label class="switch"><input id="allSites" type="checkbox"> Read page content on all sites</label>
+  <p class="muted">Brave will ask to "read and change data on all websites". That's required to read
+     page text; the extension never changes pages. Untick to revoke. When off, content is read only on
+     YouTube videos, Medium articles and Reddit threads.</p>
+
+  <h2>Never read content on these sites</h2>
+  <p class="muted">One domain per line; covers subdomains. Time spent there is still tracked,
+     only page content is skipped. Any site with "bank" in its name is always skipped.</p>
+  <textarea id="blocklist" spellcheck="false"></textarea>
+  <button id="saveBlocklist">Save list</button>
+  <button id="resetBlocklist">Reset to defaults</button>
+  <span id="blockStatus" class="ok" style="margin-left:8px"></span>
+
+  <h2>What this extension records</h2>
   <ul>
-    <li>Every site: the active tab's URL, title and time spent (not page content).</li>
-    <li>Page content only on YouTube videos, Medium articles and Reddit threads
-        (never if the page has a password field).</li>
-    <li>Google searches: the search text from the URL.</li>
-    <li>Incognito tabs are never tracked. Everything is sent only to this PC (127.0.0.1).</li>
+    <li>Every site: URL, tab title, time spent and how far you scrolled.</li>
+    <li>Searches on any site (the search text and which site), read from the URL.</li>
+    <li>Page content (title, headings, main text, max 3,000 characters) per the settings above.</li>
+    <li>Never: what you type, pages with password or card fields, blocked sites, incognito tabs.</li>
+    <li>Everything is sent only to this PC (127.0.0.1). Full page text is deleted after 60 days.</li>
   </ul>
+
+  <script src="blocklist.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

@@ -1,10 +1,9 @@
-const tokenInput = document.getElementById("token");
-const statusEl = document.getElementById("status");
-const queueEl = document.getElementById("queue");
+const ALL_SITES = { origins: ["http://*/*", "https://*/*"] };
+const $ = (id) => document.getElementById(id);
 
 function show(text, ok) {
-  statusEl.textContent = text;
-  statusEl.className = ok ? "ok" : "bad";
+  $("status").textContent = text;
+  $("status").className = ok ? "ok" : "bad";
 }
 
 async function test(token) {
@@ -23,20 +22,54 @@ async function test(token) {
 
 async function showQueue() {
   const { queue } = await chrome.storage.local.get("queue");
-  const v = queue?.visits?.length ?? 0, p = queue?.pages?.length ?? 0;
-  queueEl.textContent = `Waiting to send: ${v} visits, ${p} pages.`;
+  const v = queue?.visits?.length ?? 0, p = queue?.pages?.length ?? 0, s = queue?.searches?.length ?? 0;
+  $("queue").textContent = `Waiting to send: ${v} visits, ${s} searches, ${p} pages.`;
 }
 
-document.getElementById("save").addEventListener("click", async () => {
-  const token = tokenInput.value.trim();
+// --- connection
+$("save").addEventListener("click", async () => {
+  const token = $("token").value.trim();
   await chrome.storage.local.set({ token });
   await test(token);
 });
 
+// --- pause
+$("paused").addEventListener("change", () => chrome.storage.local.set({ paused: $("paused").checked }));
+
+// --- all-sites permission (request must happen directly in the click handler)
+$("allSites").addEventListener("change", async () => {
+  const box = $("allSites");
+  if (box.checked) {
+    box.checked = await chrome.permissions.request(ALL_SITES);
+  } else {
+    await chrome.permissions.remove(ALL_SITES);
+    box.checked = await chrome.permissions.contains(ALL_SITES);
+  }
+});
+
+// --- blocklist
+function fillBlocklist(list) {
+  $("blocklist").value = list.join("\n");
+}
+$("saveBlocklist").addEventListener("click", async () => {
+  const list = [...new Set($("blocklist").value.split(/\s+/).map(normalizeDomain).filter(Boolean))];
+  await chrome.storage.local.set({ blocklist: list });
+  fillBlocklist(list);
+  $("blockStatus").textContent = `Saved ${list.length} sites.`;
+});
+$("resetBlocklist").addEventListener("click", async () => {
+  await chrome.storage.local.set({ blocklist: DEFAULT_BLOCKLIST });
+  fillBlocklist(DEFAULT_BLOCKLIST);
+  $("blockStatus").textContent = "Reset to defaults.";
+});
+
 (async () => {
-  const { token } = await chrome.storage.local.get("token");
+  const { token, paused, blocklist } = await chrome.storage.local.get(["token", "paused", "blocklist"]);
+  $("paused").checked = !!paused;
+  $("allSites").checked = await chrome.permissions.contains(ALL_SITES);
+  fillBlocklist(blocklist ?? DEFAULT_BLOCKLIST);
   if (token) {
-    tokenInput.value = token;
+    $("token").value = token;
     await test(token);
   }
   await showQueue();

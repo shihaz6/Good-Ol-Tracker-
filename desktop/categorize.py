@@ -92,19 +92,23 @@ class Rules:
         cat = self.classify_text([(title, 3)])
         return (cat, True) if cat else (self.fallback["app"], False)
 
+    def _page_fields(self, title, page):
+        fields = [((page or {}).get(f), w) for f, w in FIELD_WEIGHTS]
+        if not (page or {}).get("title"):
+            fields.append((title, 3))  # no scan (yet): judge by the tab title
+        return fields
+
     def classify_browser(self, domain: str, title: str, page: dict | None):
         rule = self.site_rule(domain)
         if rule == CONTENT:
             author = (page or {}).get("author") or ""
             if author.lower() in self.channels:
                 return self.channels[author.lower()], True
-            fields = [((page or {}).get(f), w) for f, w in FIELD_WEIGHTS]
-            if not (page or {}).get("title"):
-                fields.append((title, 3))  # no scan (yet): judge by the tab title
-            return self.classify_text(fields) or self.fallback["content"], True
+            return self.classify_text(self._page_fields(title, page)) or self.fallback["content"], True
         if rule:
             return rule, True
-        cat = self.classify_text([(title, 3)])
+        # Unknown site: let the page content (if scanned) or the tab title decide.
+        cat = self.classify_text(self._page_fields(title, page))
         return (cat, True) if cat else (self.fallback["site"], False)
 
 

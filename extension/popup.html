@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Good ol Tracker</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 13px/1.45 system-ui, sans-serif; width: 270px; margin: 0; padding: 12px 14px; }
+    .site { font-weight: 700; font-size: 14px; word-break: break-all; }
+    .state { margin: 4px 0 10px; }
+    .ok { color: #1a7f37; } .warn { color: #9a6700; } .bad { color: #cf222e; }
+    button { width: 100%; padding: 7px; font: inherit; cursor: pointer; margin-top: 6px; }
+    label { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+    a { font-size: 12px; display: block; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="site" id="site">-</div>
+  <div class="state" id="state"></div>
+  <button id="toggleBlock" hidden></button>
+  <label><input id="paused" type="checkbox"> Pause all tracking</label>
+  <a href="#" id="openOptions">Settings</a>
+  <script src="blocklist.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
