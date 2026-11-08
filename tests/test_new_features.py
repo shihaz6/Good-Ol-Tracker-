@@ -91,6 +91,9 @@ class RulesEditTest(TempData):
 
     def test_page_rules_create_the_section_and_win_over_everything(self):
         url = "https://www.youtube.com/watch?v=abc&t=10"
+        start = json.loads(self.text())
+        start.pop("pages", None)  # your real categories.json may already have page rules
+        self.rules_path.write_text(json.dumps(start, indent=2), encoding="utf-8")
         self.set("pages", url, "Study")
         raw = json.loads(self.text())
         self.assertEqual(raw["pages"], {"https://www.youtube.com/watch?v=abc": "Study"})

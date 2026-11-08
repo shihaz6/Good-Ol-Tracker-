@@ -11,7 +11,9 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
 import ai_categorize
+import ai_judge
 import categorize
+import keys
 
 FOCUS_GAP = 120          # a focus streak survives interruptions up to this long (seconds)
 FOCUS_MIN = 5 * 60       # shorter productive stretches aren't counted as streaks
@@ -182,7 +184,7 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
     per_day = {d.isoformat(): defaultdict(float) for d in days}
     by_hour = [defaultdict(float) for _ in range(24)]  # hour -> category -> seconds
     apps = defaultdict(lambda: {"seconds": 0.0, "cats": Counter(), "kind": "app"})
-    pages = defaultdict(lambda: {"seconds": 0.0, "title": "", "domain": "", "category": ""})
+    pages = defaultdict(lambda: {"seconds": 0.0, "title": "", "domain": "", "category": "", "via": ""})
     unmatched = defaultdict(float)
     unsure = defaultdict(lambda: {"seconds": 0.0, "urls": set()})
 
@@ -201,7 +203,7 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
         if it.url:
             p = pages[it.url]
             p["seconds"] += secs
-            p["title"], p["domain"], p["category"] = it.title, it.app, it.category
+            p["title"], p["domain"], p["category"], p["via"] = it.title, it.app, it.category, it.via
         if not it.matched:
             unmatched[("site" if it.source == "browser" else "app", it.app)] += secs
         elif it.category == rules.fallback["content"]:
@@ -228,6 +230,8 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
     top_unsure = sorted(unsure.items(), key=lambda kv: -kv[1]["seconds"])[:10]
     urls = [u for m in top_pages for u in m["urls"]]
     scanned = categorize._load_pages(conn, urls + [u for _, v in top_unsure for u in v["urls"]])
+    judged = ai_judge.page_reasons(conn, [m["url"] for m in top_pages if m["via"] == "groq"])
+    suggested = ai_judge.suggestions(conn, rules)
     scroll = {}
     for i in range(0, len(urls), 500):
         chunk = urls[i:i + 500]
@@ -288,7 +292,9 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
              "title": next(((scanned.get(u) or {}).get("title") for u in m["urls"] if (scanned.get(u) or {}).get("title")),
                            m["title"]),
              "scroll": max((scroll[u] for u in m["urls"] if scroll.get(u) is not None), default=None),
-             "has_text": any((scanned.get(u) or {}).get("body") for u in m["urls"])}
+             "has_text": any((scanned.get(u) or {}).get("body") for u in m["urls"]),
+             "ai": {"confidence": round(judged[m["url"]][0], 2), "reason": judged[m["url"]][1]}
+             if m["url"] in judged else None}
             for m in top_pages
         ],
         "topics": [
@@ -301,8 +307,10 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
             for ts, engine, domain, query in search_rows[:200]
         ],
         "search_count": len(search_rows),
-        "unmatched": [{"kind": k, "name": n, "seconds": round(s)}
+        "unmatched": [{"kind": k, "name": n, "seconds": round(s), "suggestion": suggested.get((k, n.lower()))}
                       for (k, n), s in sorted(unmatched.items(), key=lambda kv: -kv[1])[:10]],
+        "ai_judge": {**ai_judge.counts(conn), "last_error": ai_judge.status["last_error"],
+                     "groq_key": bool(keys.load_key("groq"))},
         "unsure": [{"site": site, "title": title, "seconds": round(v["seconds"]), "urls": sorted(v["urls"])[:20],
                     "channel": next(((scanned.get(u) or {}).get("author") for u in v["urls"]
                                      if (scanned.get(u) or {}).get("author")), None)}

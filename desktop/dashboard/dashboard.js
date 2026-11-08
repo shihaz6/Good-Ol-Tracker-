@@ -571,6 +571,13 @@ function renderPages(d) {
         read.append(meter, document.createTextNode(`${Math.round(p.scroll)}%`));
       }
       let cat = catLabel(p.category);
+      if (p.ai && !state.editPages) {
+        const badge = el("span", "badge ai", "AI");
+        const why = `Decided by AI (${Math.round(p.ai.confidence * 100)}% sure): ${p.ai.reason || "no reason given"}. Use "Change categories" to correct it.`;
+        badge.title = why;
+        badge.setAttribute("aria-label", why);
+        cat.append(badge);
+      }
       if (state.editPages) {
         cat = catSelect(p.category, { label: `Category for ${p.title || p.url}` });
         cat.addEventListener("change", () => saveRules(
@@ -594,10 +601,55 @@ function renderSearches(d) {
 function renderRules(d) {
   fillRuleFormCategories();
   const parts = [];
-  if (d.unmatched.length) {
+  const aj = d.ai_judge;
+  if (aj) {
+    let note = "";
+    if (!aj.groq_key) note = "AI checking is off: add a Groq key (data/groq_key.txt).";
+    else if (aj.last_error) note = `AI checking paused: ${aj.last_error}`;
+    else if (aj.pages_asked || aj.suggestions) {
+      note = `AI checked ${aj.pages_asked} unsure page${aj.pages_asked === 1 ? "" : "s"} and decided ${aj.pages_decided}`
+        + (aj.suggestions ? ` · ${aj.suggestions} site/app suggestion${aj.suggestions === 1 ? "" : "s"} waiting` : "") + ".";
+    } else note = "AI checks unsure pages and new sites/apps in the background, every couple of minutes.";
+    parts.push(el("p", "muted ai-note", note));
+  }
+  const suggested = d.unmatched.filter((u) => u.suggestion);
+  if (suggested.length) {
+    parts.push(el("h3", "mini", "AI suggestions"));
+    parts.push(el("p", "sub", "Accepting saves a rule for the whole site or app (you can undo it)."));
+    parts.push(table([{ label: "Name", cls: "title" }, { label: "Time", num: true }, { label: "Suggested" }, { label: "" }],
+      suggested.map((u) => {
+        const s = u.suggestion;
+        const section = u.kind === "site" ? "sites" : "apps";
+        const label = s.category === CONTENT ? "By page content" : s.category;
+        const what = el("div");
+        what.append(s.category === CONTENT ? el("span", "cat", label) : catLabel(s.category));
+        what.append(el("div", "scope", `${s.reason || ""} (${Math.round(s.confidence * 100)}% sure)`.trim()));
+        const name = el("div");
+        name.append(el("span", null, u.name), el("span", "tag", u.kind));
+        const actions = el("div", "suggest-actions");
+        const yes = el("button", "ghost small", "Accept");
+        const no = el("button", "linkbtn", "Reject");
+        yes.type = no.type = "button";
+        yes.setAttribute("aria-label", `Accept ${label} for ${u.name}`);
+        no.setAttribute("aria-label", `Reject the suggestion for ${u.name}`);
+        yes.addEventListener("click", () => saveRules([{ section, key: u.name, category: s.category }], yes));
+        no.addEventListener("click", async () => {
+          no.disabled = true;
+          try {
+            await post("/api/ai/dismiss", { kind: u.kind, name: u.name });
+            say("#rules-msg", `Rejected the suggestion for ${u.name}.`);
+            await load();
+          } catch (err) { say("#rules-msg", `Couldn't reject: ${err.message}`, true); no.disabled = false; }
+        });
+        actions.append(yes, no);
+        return [name, fmtDur(u.seconds), what, actions];
+      })));
+  }
+  const unmatched = d.unmatched.filter((u) => !u.suggestion);
+  if (unmatched.length) {
     parts.push(el("h3", "mini", "No rule yet"));
     parts.push(table([{ label: "Name", cls: "title" }, { label: "Type" }, { label: "Time", num: true }, { label: "Set category" }],
-      d.unmatched.map((u) => {
+      unmatched.map((u) => {
         const section = u.kind === "site" ? "sites" : "apps";
         const sel = catSelect("", { content: section === "sites", label: `Category for ${u.name}` });
         sel.addEventListener("change", () => saveRules([{ section, key: u.name, category: sel.value }], sel));
@@ -628,7 +680,7 @@ function renderRules(d) {
         return [u.site, u.title, fmtDur(u.seconds), box];
       })));
   }
-  if (!parts.length) parts.push(empty("Everything in this range has a category. Use the pickers in \"Top apps and sites\" or \"Pages read\" to change one."));
+  if (!parts.some((p) => p.tagName === "TABLE" || p.querySelector?.("table"))) parts.push(empty("Everything in this range has a category. Use the pickers in \"Top apps and sites\" or \"Pages read\" to change one."));
   $("#rules").replaceChildren(...parts);
 }
 

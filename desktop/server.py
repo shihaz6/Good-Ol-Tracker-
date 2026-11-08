@@ -22,6 +22,7 @@ Endpoints:
   GET  /api/email                      -> email settings (never the password)
   POST /api/email/settings {...,password?} / POST /api/email/test
   POST /api/rules {changes:[{section,key,category}]} / POST /api/rules/undo / GET /api/rules/recent
+  POST /api/ai/dismiss {kind, name}   reject a Groq site/app suggestion
   GET  /api/find?q=&meaning=1          -> search pages you've read + past searches
   GET  /api/focus / POST /api/focus/start {minutes,label} / /api/focus/stop / /api/focus/settings
   POST /focus {action:start|stop, minutes, label}  (extension popup; needs token)
@@ -42,6 +43,7 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 import ai_categorize
+import ai_judge
 import analytics
 import backup
 import categorize
@@ -386,6 +388,15 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
+    def _ai_dismiss(self, body):
+        """Reject a Groq suggestion for a site/app: it isn't shown (or asked about) again."""
+        conn = db.connect()
+        try:
+            ai_judge.dismiss(conn, str(body.get("kind", "")), str(body.get("name", "")))
+        finally:
+            conn.close()
+        return self._json(200, {"ok": True})
+
     def _focus_settings(self, body):
         return self._json(200, {"ok": True, "settings": focus.save_settings(body)})
 
@@ -482,6 +493,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/email/test": self._email_test,
             "/api/rules": self._rules_set,
             "/api/rules/undo": self._rules_undo,
+            "/api/ai/dismiss": self._ai_dismiss,
             "/api/focus/start": lambda b: self._json(200, self._focus_do({**b, "action": "start"})),
             "/api/focus/stop": lambda b: self._json(200, self._focus_do({"action": "stop"})),
             "/api/focus/settings": self._focus_settings,

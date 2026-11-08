@@ -336,6 +336,10 @@ mark { background: var(--wash); color: var(--ink); font-weight: 600; border-radi
 .recent { list-style: none; padding: 0; margin: 8px 0 0; font-size: 13px; color: var(--ink-2); }
 .recent li { padding: 3px 0; }
 .scope { font-size: 12px; color: var(--muted); }
+.badge.ai { margin-left: 6px; font-size: 10px; font-weight: 600; letter-spacing: .04em; cursor: help; }
+.ai-note { margin: 0 0 10px; font-size: 13px; }
+.suggest-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; white-space: nowrap; }
+button.small { padding: 3px 10px; font-size: 13px; }
 
 /* ------------------------------------------------------------ print / PDF */
 

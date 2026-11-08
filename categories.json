@@ -77,6 +77,11 @@
     "SearchHost.exe": "Other",
     "ShellExperienceHost.exe": "Other",
     "ApplicationFrameHost.exe": "Other",
+    "ShellHost.exe": "Other",
+    "CredentialUIBroker.exe": "Other",
+    "consent.exe": "Other",
+    "LockApp.exe": "Other",
+    "StartMenuExperienceHost.exe": "Other",
     "Notepad.exe": "Other"
   },
 
@@ -241,5 +246,9 @@
       "movie", "full movie", "episode", "highlights", "meme", "memes", "prank",
       "reaction", "vlog", "comedy", "anime", "football", "cricket"
     ]
+  },
+
+  "pages": {
+    "https://www.google.com/search?q=what+are+the+main+reasons+for+brain+tumor": "Browsing"
   }
 }

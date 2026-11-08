@@ -136,6 +136,32 @@ CREATE TABLE IF NOT EXISTS focus_blocks (
 );
 CREATE INDEX IF NOT EXISTS idx_focus_blocks ON focus_blocks(focus_id);
 
+-- Groq judge (ai_judge.py): decides pages the rules, keywords and Voyage left "Unsure".
+CREATE TABLE IF NOT EXISTS page_judge (
+    url         TEXT PRIMARY KEY,     -- sessions.url
+    category    TEXT,                 -- NULL = Groq wasn't confident either
+    confidence  REAL,
+    reason      TEXT,
+    model       TEXT NOT NULL,
+    input_hash  TEXT NOT NULL,        -- what was sent (ask again when the page changes)
+    rules_hash  TEXT NOT NULL,        -- category list it chose from
+    updated_ts  REAL NOT NULL
+);
+-- Groq suggestions for whole sites/apps without a rule. Shown on the dashboard; a rule
+-- is only written when you accept one. dismissed = 1 after "Reject".
+CREATE TABLE IF NOT EXISTS name_judge (
+    kind        TEXT NOT NULL,        -- 'site' | 'app'
+    name        TEXT NOT NULL,        -- domain or exe name (lower case)
+    category    TEXT,
+    confidence  REAL,
+    reason      TEXT,
+    model       TEXT NOT NULL,
+    rules_hash  TEXT NOT NULL,
+    updated_ts  REAL NOT NULL,
+    dismissed   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (kind, name)
+);
+
 -- Weekly AI summaries (Groq). payload = exactly what was sent.
 CREATE TABLE IF NOT EXISTS summaries (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

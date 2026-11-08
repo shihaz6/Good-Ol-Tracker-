@@ -17,6 +17,7 @@ import threading
 import time
 
 import ai_categorize
+import ai_judge
 import backup
 import categorize
 import db
@@ -127,6 +128,17 @@ def background_worker() -> None:
             log.warning("ai categoriser: %s", exc)
         except Exception:
             log.exception("ai categoriser failed")
+
+        try:  # after Voyage, so Groq only sees what it left undecided
+            result = ai_judge.run_batch(conn, categorize.Rules())
+            ai_judge.status.update(last_run=time.time(), last_error=None)
+            if result.get("requests"):
+                log.info("ai judge: %s", result)
+        except ai_judge.JudgeError as exc:
+            ai_judge.status["last_error"] = str(exc)
+            log.warning("ai judge: %s (pausing %d min)", exc, ai_judge.BACKOFF // 60)
+        except Exception:
+            log.exception("ai judge failed")
 
         if AUTO_WEEKLY and time.time() - last_weekly_check >= 3600:
             last_weekly_check = time.time()

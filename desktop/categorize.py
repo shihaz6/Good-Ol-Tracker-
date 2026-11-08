@@ -13,9 +13,12 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import sitelists
+
 RULES_PATH = Path(__file__).resolve().parent.parent / "categories.json"
 BROWSERS = {"brave.exe", "chrome.exe", "msedge.exe"}
 CONTENT = "content"
+ADULT_CATEGORY = "Entertainment"  # adult sites (extension/adult.js) without a rule of their own
 
 # How much a keyword hit in each page field counts. The title says the most.
 FIELD_WEIGHTS = (("title", 3), ("author", 2), ("description", 1), ("headings", 1), ("body", 0.5))
@@ -34,6 +37,7 @@ class Item:
     source: str     # 'desktop' | 'browser'
     matched: bool   # False = no rule matched; shown in "Not categorised yet"
     url: str | None = None  # browser time only
+    via: str = ""   # browser time: what decided it ("groq" = the AI judge; shown as a badge)
 
     @property
     def seconds(self) -> float:
@@ -103,23 +107,41 @@ class Rules:
         return fields
 
     def classify_browser(self, domain: str, title: str, page: dict | None, url: str | None = None):
-        """Order: page rule > site rule > channel rule > keywords > AI (embeddings) > fallback."""
+        cat, matched, _ = self.classify_browser_ex(domain, title, page, url)
+        return cat, matched
+
+    def classify_browser_ex(self, domain: str, title: str, page: dict | None, url: str | None = None):
+        """-> (category, matched, via). Order: page rule > site rule > adult site > channel
+        rule > keywords > AI embeddings (Voyage) > AI judge (Groq) > fallback."""
         if url and self.pages.get(url) in self.categories:
-            return self.pages[url], True
+            return self.pages[url], True, "rule"
         rule = self.site_rule(domain)
-        ai = (page or {}).get("ai_category")
-        if ai not in self.categories:
-            ai = None
+        page = page or {}
+        ai = page.get("ai_category") if page.get("ai_category") in self.categories else None
+        judge = page.get("judge_category") if page.get("judge_category") in self.categories else None
         if rule == CONTENT:
-            author = (page or {}).get("author") or ""
+            author = page.get("author") or ""
             if author.lower() in self.channels:
-                return self.channels[author.lower()], True
-            return self.classify_text(self._page_fields(title, page)) or ai or self.fallback["content"], True
+                return self.channels[author.lower()], True, "rule"
+            cat = self.classify_text(self._page_fields(title, page))
+            if cat:
+                return cat, True, "keywords"
+            if ai:
+                return ai, True, "voyage"
+            if judge:
+                return judge, True, "groq"
+            return self.fallback["content"], True, "fallback"
         if rule:
-            return rule, True
+            return rule, True, "rule"
+        if ADULT_CATEGORY in self.categories and sitelists.is_adult(domain):
+            return ADULT_CATEGORY, True, "adult"
         # Unknown site: let the page content (if scanned) or the tab title decide.
-        cat = self.classify_text(self._page_fields(title, page)) or ai
-        return (cat, True) if cat else (self.fallback["site"], False)
+        cat = self.classify_text(self._page_fields(title, page))
+        if cat:
+            return cat, True, "keywords"
+        if ai:
+            return ai, True, "voyage"
+        return self.fallback["site"], False, "fallback"
 
 
 # --- reading + splitting -----------------------------------------------------
@@ -134,6 +156,12 @@ def _load_pages(conn, urls):
             f" WHERE p.url IN ({','.join('?' * len(chunk))})", chunk)
         for url, *vals in rows:
             pages[url] = dict(zip(("title", "author", "description", "headings", "body", "ai_category"), vals))
+        # The Groq judge also decides pages that were never scanned (by tab title), so it
+        # can add an entry here for a URL that isn't in `pages`.
+        for url, cat in conn.execute(
+                f"SELECT url, category FROM page_judge WHERE category IS NOT NULL"
+                f" AND url IN ({','.join('?' * len(chunk))})", chunk):
+            pages.setdefault(url, {})["judge_category"] = cat
     return pages
 
 
@@ -187,8 +215,8 @@ def _categorise_pc(conn, start: float, end: float, rules: Rules) -> list[Item]:
 
     visits = []
     for s, e, domain, title, url in browser_rows:
-        cat, matched = rules.classify_browser(domain, title, pages.get(url), url)
-        visits.append(Item(s, e, cat, domain, title, "browser", matched, url))
+        cat, matched, via = rules.classify_browser_ex(domain, title, pages.get(url), url)
+        visits.append(Item(s, e, cat, domain, title, "browser", matched, url, via))
 
     items, i = [], 0
     for s, e, app, title, _ in desktop:
@@ -213,7 +241,7 @@ def _categorise_pc(conn, start: float, end: float, rules: Rules) -> list[Item]:
                 continue
             if os_ > cursor:
                 items.append(_browser_gap(rules, cursor, os_, app, title))
-            items.append(Item(os_, oe, v.category, v.app, v.title, "browser", v.matched, v.url))
+            items.append(Item(os_, oe, v.category, v.app, v.title, "browser", v.matched, v.url, v.via))
             cursor = oe
         if cursor < e:
             # No extension data (new tab page, settings, incognito, extension off).

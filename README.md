@@ -136,7 +136,11 @@ What counts as productive is the `"productive"` list in `categories.json`.
   recategorised at once. **Undo last change** reverts it byte for byte; it refuses if
   you edited the file by hand since, so it never throws your own edits away. History of
   dashboard changes: `data\rules_history.json`.
-- Rule order: page rule > site rule > channel > keywords > AI > fallback.
+- **AI suggestions** (Groq): sites and apps with no rule get a suggested category with a
+  short reason. *Accept* writes the rule (undoable); *Reject* hides it for good.
+- Pages Groq decided show an **AI** badge in *Pages read* (hover for its reason).
+- Rule order: page rule > site rule > adult site (→ Entertainment) > channel > keywords >
+  Voyage > Groq judge > fallback.
 
 ## Search what you've read
 
@@ -200,12 +204,21 @@ Two optional API keys, each in its own file in `data\` (gitignored) or an env va
 |---|---|---|---|
 | Voyage | `data\voyage_key.txt` (`VOYAGE_API_KEY`) | Categorising pages the rules can't decide | Each scanned page's title, channel, description, headings and first ~1,500 characters, once per page |
 | Groq | `data\groq_key.txt` (`GROQ_API_KEY`) | Weekly summary | Totals only: hours per category/day, focus stats, top app/site names, topic words. Never page text, titles, URLs or searches |
+| Groq | same key | AI judge: Unsure pages, sites/apps with no rule | Unsure pages: site, tab/page title, channel, description, search words and the first 500 characters of text. Unruled sites/apps: the name and up to 3 titles. Once per item |
 
 - **AI categoriser** (`desktop/ai_categorize.py`): runs in the tracker's background every
   2 minutes, for pages and for search queries (each distinct query once; keywords still win). Compares each page to the example `descriptions` per category in
   `categories.json`. Rules and keywords always win; the AI only fills in pages they
   can't decide. Each page is embedded once and cached; editing `descriptions`
   re-categorises without re-sending pages.
+- **AI judge** (`desktop/ai_judge.py`): runs right after the categoriser, only on what it
+  left undecided. Pages on mixed sites (YouTube, claude.ai, Google, ...) that are still
+  Unsure get Groq's category automatically when it's at least 70% sure. Sites/apps
+  without a rule only get a *suggestion* on the Fix categories card. Each item is asked
+  once (again only if its text or the category list changes); at most 3 requests every
+  2 minutes, pausing 10 minutes after a rate limit. Never sent: the never-read sites
+  (WhatsApp, banks, password managers, see `extension/blocklist.js`), password-manager
+  and banking apps, and adult sites (categorised Entertainment locally).
 - **Weekly summary** (`desktop/weekly.py`): written automatically each Monday for the
   previous Mon-Sun, or on demand with the dashboard button. The dashboard shows
   exactly what gets sent (*What gets sent to Groq*). Command line:
