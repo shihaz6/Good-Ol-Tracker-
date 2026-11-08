@@ -112,6 +112,11 @@ def _migrate(conn) -> None:
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_client ON sessions(client_id)"
     )
+    # One-off repair (2026-11-08): a bug stored "no scroll data" as 0%. A real reading is
+    # never 0 (the first screen already counts), so 0 means unknown.
+    if get_meta(conn, "fix_scroll_zero") is None:
+        conn.execute("UPDATE sessions SET scroll_pct = NULL WHERE scroll_pct = 0")
+        conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('fix_scroll_zero', '1')")
     conn.commit()
 
 
@@ -194,7 +199,10 @@ def insert_browser_visits(conn, visits) -> int:
            ON CONFLICT(client_id) DO UPDATE SET
              end_ts     = MAX(sessions.end_ts, excluded.end_ts),
              title      = excluded.title,
-             scroll_pct = MAX(COALESCE(sessions.scroll_pct, 0), COALESCE(excluded.scroll_pct, 0))""",
+             scroll_pct = CASE  -- keep the deepest scroll; "unknown" (NULL) never becomes 0
+               WHEN excluded.scroll_pct IS NULL THEN sessions.scroll_pct
+               WHEN sessions.scroll_pct IS NULL THEN excluded.scroll_pct
+               ELSE MAX(sessions.scroll_pct, excluded.scroll_pct) END""",
         rows,
     )
     conn.commit()

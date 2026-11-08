@@ -168,6 +168,16 @@ class PageContentTest(unittest.TestCase):
         rows = conn.execute("SELECT client_id, scroll_pct FROM sessions ORDER BY client_id").fetchall()
         self.assertEqual(rows, [("v1", 85.0), ("v2", 100.0)])
 
+    def test_unknown_scroll_stays_unknown(self):
+        # regression: re-sending a live visit without scroll data turned NULL into 0%
+        conn = memory_db()
+        v = {"id": "v1", "start": 0, "end": 10, "url": "https://a.com/x", "title": "t", "scroll": None}
+        db.insert_browser_visits(conn, [v])
+        db.insert_browser_visits(conn, [{**v, "end": 20}])
+        self.assertIsNone(conn.execute("SELECT scroll_pct FROM sessions").fetchone()[0])
+        db.insert_browser_visits(conn, [{**v, "end": 30, "scroll": 40}])
+        self.assertEqual(conn.execute("SELECT scroll_pct FROM sessions").fetchone()[0], 40.0)
+
     def test_retention_drops_old_text_keeps_titles(self):
         import time
         conn = memory_db()

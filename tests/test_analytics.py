@@ -108,6 +108,17 @@ class SummaryTest(unittest.TestCase):
         p = analytics.summary(self.conn, DAY, DAY)["pages"][0]
         self.assertEqual((p["url"], p["seconds"], p["scroll"]), ("https://x.dev/p", 1800, 70.0))
 
+    def test_same_page_different_urls_is_one_row(self):
+        desktop(self.conn, at(9), at(10), "brave.exe")
+        db.insert_browser_visits(self.conn, [
+            {"id": "a", "start": at(9), "end": at(9, 10), "url": "https://d.ai/home?ref=1", "title": "Dashboard", "scroll": 30},
+            {"id": "b", "start": at(9, 10), "end": at(9, 15), "url": "https://d.ai/home?ref=2", "title": "Dashboard", "scroll": 60},
+            {"id": "c", "start": at(9, 15), "end": at(9, 16), "url": "https://d.ai/keys", "title": "Keys"},
+        ])
+        pages = analytics.summary(self.conn, DAY, DAY)["pages"]
+        self.assertEqual([(p["title"], p["seconds"], p["scroll"], p["url"]) for p in pages],
+                         [("Dashboard", 900, 60.0, "https://d.ai/home?ref=1"), ("Keys", 60, None, "https://d.ai/keys")])
+
     def test_empty_range(self):
         s = analytics.summary(self.conn, DAY, DAY)
         self.assertEqual(s["totals"]["active"], 0)

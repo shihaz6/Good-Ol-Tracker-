@@ -199,10 +199,13 @@ function renderNow(d) {
     out.textContent = d.range.includes_today ? "Right now: idle or away" : "";
     return;
   }
-  const parts = [];
-  if (now.desktop) parts.push(`${now.desktop.category} · ${now.desktop.app}`);
-  if (now.browser) parts.push(`${now.browser.app} (${now.browser.category})`);
-  out.textContent = `Right now: ${parts.join(" · on ")}`;
+  const BROWSERS = ["brave.exe", "chrome.exe", "msedge.exe"];
+  const inBrowser = now.desktop && BROWSERS.includes(now.desktop.app.toLowerCase());
+  let text;
+  if (inBrowser && now.browser) text = `${now.browser.category} · ${now.browser.app}`;  // the site decides
+  else if (now.desktop) text = `${now.desktop.category} · ${now.desktop.app}`;
+  else text = `${now.browser.category} · ${now.browser.app}`;
+  out.textContent = `Right now: ${text}`;
 }
 
 function tile(label, value, note, hero = false) {

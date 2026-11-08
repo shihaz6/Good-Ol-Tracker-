@@ -265,26 +265,42 @@ function scanPage(kind) {
   };
 }
 
-// Runs inside the page: reports the deepest scroll position (% of page) to the worker.
+// Runs inside the page: reports the deepest scroll position (% of content) to the worker.
+// Handles both normal pages (the window scrolls) and app-style pages where a large inner
+// panel scrolls instead (Gmail, chat apps, HackerRank). No reading = nothing reported,
+// never a made-up 100%.
 function installScrollTracker() {
-  if (window.__goodOlScroll) return;
-  window.__goodOlScroll = true;
-  let href = location.href, max = 0, sent = 0, timer = null;
-  const measure = () => {
+  if (window.__goodOlScroll2) return;
+  window.__goodOlScroll2 = true;
+  let href = location.href, max = 0, sent = 0, timer = null, target = null;
+  const pct = (top, view, total) => Math.min(100, Math.round(((top + view) / total) * 100));
+  const measure = (el) => {
+    if (el && el.nodeType === 1 && el !== document.documentElement && el !== document.body) {
+      // An inner panel counts only if it's a main content area, not a small widget.
+      if (el.clientHeight < innerHeight * 0.5 || el.scrollHeight <= el.clientHeight + 1) return null;
+      return pct(el.scrollTop, el.clientHeight, el.scrollHeight);
+    }
     const height = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
-    if (height <= innerHeight + 1) return 100; // whole page fits on screen
-    return Math.min(100, Math.round(((scrollY + innerHeight) / height) * 100));
+    if (height <= innerHeight + 1) return null; // the window itself doesn't scroll
+    return pct(scrollY, innerHeight, height);
   };
   const report = () => {
     timer = null;
     if (location.href !== href) { href = location.href; max = 0; sent = 0; } // single-page app navigation
-    max = Math.max(max, measure());
+    const value = measure(target);
+    target = null;
+    if (value == null) return;
+    max = Math.max(max, value);
     if (max >= sent + 5 || (max === 100 && sent < 100)) {
       sent = max;
       try { chrome.runtime.sendMessage({ type: "scroll", url: href, pct: max }).catch(() => {}); } catch {}
     }
   };
-  addEventListener("scroll", () => { if (!timer) timer = setTimeout(report, 1000); }, { passive: true });
+  // Capture phase: inner panels' scroll events don't bubble, but they do pass through here.
+  addEventListener("scroll", (e) => {
+    target = e.target === document ? null : e.target;
+    if (!timer) timer = setTimeout(report, 1000);
+  }, { passive: true, capture: true });
   report();
 }
 

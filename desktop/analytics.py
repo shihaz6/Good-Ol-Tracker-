@@ -197,9 +197,17 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
     prod_secs = sum(v for k, v in by_cat.items() if k in productive)
     switches = _switches(items)
 
-    # Pages: scanned title + deepest scroll + whether full text is stored.
-    top_pages = sorted(pages.items(), key=lambda kv: -kv[1]["seconds"])[:25]
-    urls = [u for u, _ in top_pages]
+    # Pages: the same page reached via slightly different URLs (tracking/query params)
+    # becomes one row, linked to the URL you spent most time on.
+    merged = {}
+    for url, p in pages.items():
+        m = merged.setdefault((p["domain"], p["title"]), {**p, "seconds": 0.0, "url": url, "best": -1.0, "urls": []})
+        m["seconds"] += p["seconds"]
+        m["urls"].append(url)
+        if p["seconds"] > m["best"]:
+            m["url"], m["best"] = url, p["seconds"]
+    top_pages = sorted(merged.values(), key=lambda m: -m["seconds"])[:25]
+    urls = [u for m in top_pages for u in m["urls"]]
     scanned = categorize._load_pages(conn, urls)
     scroll = {}
     for i in range(0, len(urls), 500):
@@ -254,10 +262,12 @@ def summary(conn, start_day: date, end_day: date, rules=None) -> dict:
             for (name, _), a in sorted(apps.items(), key=lambda kv: -kv[1]["seconds"])[:15]
         ],
         "pages": [
-            {"url": url, "domain": p["domain"], "seconds": round(p["seconds"]), "category": p["category"],
-             "title": (scanned.get(url) or {}).get("title") or p["title"],
-             "scroll": scroll.get(url), "has_text": bool((scanned.get(url) or {}).get("body"))}
-            for url, p in top_pages
+            {"url": m["url"], "domain": m["domain"], "seconds": round(m["seconds"]), "category": m["category"],
+             "title": next(((scanned.get(u) or {}).get("title") for u in m["urls"] if (scanned.get(u) or {}).get("title")),
+                           m["title"]),
+             "scroll": max((scroll[u] for u in m["urls"] if scroll.get(u) is not None), default=None),
+             "has_text": any((scanned.get(u) or {}).get("body") for u in m["urls"])}
+            for m in top_pages
         ],
         "topics": [
             {"term": t, "score": s, "searches": topic_searches[t], "pages": topic_pages[t]}
