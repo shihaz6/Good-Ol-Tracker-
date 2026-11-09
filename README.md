@@ -27,6 +27,7 @@ More detail: [docs/architecture.md](docs/architecture.md) (how it fits together)
 - [Tests](#tests)
 - [Troubleshooting and known limitations](#troubleshooting-and-known-limitations)
 - [Project layout](#project-layout)
+- [License](#license)
 
 ---
 
@@ -194,9 +195,6 @@ What leaves the PC, and only if you set it up:
 plus banking and password-manager apps), adult sites (categorised locally), private-window
 browsing (not recorded at all).
 
-Your keys and the Gmail App Password are stored in `data\*_key.txt` (gitignored). If one has
-ever been pasted somewhere public or into a chat, rotate it.
-
 ---
 
 ## Categories
@@ -321,3 +319,9 @@ categories.json     your category rules
 install_autostart.ps1, phone_firewall.ps1
 data/               your database, settings, keys, logs, backups (gitignored)
 ```
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE). Copyright (c) 2026 shihaz6.
