@@ -165,6 +165,38 @@ def phone_block(conn, rules=None, now=None) -> list:
     return sorted(pkgs - set(categorize.IGNORED_PHONE_APPS))
 
 
+def record_phone_sessions(conn, items, device: str, now=None) -> int:
+    """Finished focus sessions the phone ran on its own while it couldn't reach the PC:
+    [{id, start, planned_end, end, label}] (ms). Saved so they count in the focus stats and
+    the apps blocked during them (record_phone_blocks) have a session to belong to.
+    Skipped if a PC session already covers that time (its blocks go to that one)."""
+    now = now or time.time()
+    added = 0
+    for it in (items if isinstance(items, list) else [])[:50]:
+        try:
+            cid = f"phone:{device}:{str(it['id'])[:60]}"
+            start = float(it["start"]) / 1000
+            planned = float(it["planned_end"]) / 1000
+            end = min(float(it.get("end") or it["planned_end"]) / 1000, planned, now)
+            label = str(it.get("label") or "")[:100].strip()
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (0 < start < planned <= start + 12 * 3600) or end <= start:
+            continue
+        overlap = conn.execute(
+            "SELECT 1 FROM focus_sessions WHERE start_ts < ? AND COALESCE(end_ts, planned_end_ts) > ?"
+            " AND (client_id IS NULL OR client_id != ?)", (end, start, cid)).fetchone()
+        if overlap:
+            continue
+        result = "completed" if end >= planned - DONE_GRACE else "stopped"
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO focus_sessions (start_ts, planned_end_ts, end_ts, result, label, client_id)"
+            " VALUES (?, ?, ?, ?, ?, ?)", (start, planned, end, result, label, cid))
+        added += cur.rowcount
+    conn.commit()
+    return added
+
+
 def record_phone_blocks(conn, items) -> int:
     """items from the phone app: [{id, ts, app}] = a blocked app was opened during focus."""
     rows = []

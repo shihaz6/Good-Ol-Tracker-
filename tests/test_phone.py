@@ -116,6 +116,19 @@ class SyncTest(PhoneBase):
         phone.sync(self.conn, device, {"sessions": [s]}, now=at(12))
         self.assertEqual(self.conn.execute("SELECT end_ts FROM sessions WHERE source='phone'").fetchone()[0], at(9, 25))
 
+    def test_phone_only_focus_session_keeps_its_blocks(self):
+        device, _ = self.pair()
+        local = {"id": "local-1", "start": ms(at(9)), "planned_end": ms(at(9, 25)), "end": ms(at(9, 20)), "label": "Maths"}
+        block = {"id": "com.instagram.android@1", "ts": ms(at(9, 5)), "app": "Instagram"}
+        phone.sync(self.conn, device, {"local_focus": [local], "focus_blocks": [block]}, now=at(12))
+        phone.sync(self.conn, device, {"local_focus": [local], "focus_blocks": [block]}, now=at(12))  # re-sent
+        rows = self.conn.execute("SELECT start_ts, end_ts, result, label FROM focus_sessions").fetchall()
+        self.assertEqual(rows, [(at(9), at(9, 20), "stopped", "Maths")])
+        self.assertEqual(self.conn.execute("SELECT domain FROM focus_blocks").fetchall(), [("Instagram (phone)",)])
+        # one that overlaps a session the PC already has isn't added twice
+        phone.sync(self.conn, device, {"local_focus": [{**local, "id": "local-2"}]}, now=at(12))
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM focus_sessions").fetchone()[0], 1)
+
     def test_bad_rows(self):
         device, _ = self.pair()
         future = {"pkg": "a.b", "start": ms(at(13)), "end": ms(at(14))}

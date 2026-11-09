@@ -31,6 +31,7 @@ object Focus {
         if (res.has("focus")) {
             val f = res.optJSONObject("focus")
             if (f != null) {
+                if (prefs.focusLocal && prefs.focusActive) endLocal(prefs)  // the PC's session takes over
                 prefs.setFocus(f.optLong("id"), f.optDouble("start"), f.optDouble("end"), f.optString("label"), false)
             } else if (!(prefs.focusLocal && prefs.focusActive)) {
                 prefs.clearFocus()  // the PC ended it (or it ran out); a phone-only session keeps going
@@ -78,14 +79,23 @@ object Focus {
             "Focus started for $minutes min."
         } catch (e: Exception) {
             val now = System.currentTimeMillis() / 1000.0
+            if (prefs.focusLocal && prefs.focusActive) endLocal(prefs)
             prefs.setFocus(-1L, now, now + minutes * 60, label, true)
+            // Remembered so the PC gets it later: it counts in your focus stats, and the apps
+            // blocked during it have a session to belong to (they used to be dropped).
+            val arr = localSessions(prefs)
+            if (arr.length() < 50) {
+                arr.put(JSONObject().put("id", localId(prefs)).put("start", (now * 1000).toLong())
+                    .put("planned_end", ((now + minutes * 60) * 1000).toLong()).put("label", label))
+                prefs.pendingLocalFocus = arr.toString()
+            }
             "PC not reachable: blocking apps on the phone only for $minutes min."
         }
     }
 
     fun stop(context: Context): String {
         val prefs = Prefs(context)
-        if (prefs.focusLocal) { prefs.clearFocus(); return "Focus ended." }
+        if (prefs.focusLocal) { endLocal(prefs); prefs.clearFocus(); return "Focus ended." }
         return try {
             applyReply(context, Net.focusAction(context, prefs, JSONObject().put("action", "stop")))
             prefs.clearFocus()
@@ -100,6 +110,50 @@ object Focus {
         }
     }
 
+    // ------------------------------------------------------------ phone-only sessions
+
+    private fun localId(prefs: Prefs) = "local-" + (prefs.focusStartSec * 1000).toLong()
+
+    private fun localSessions(prefs: Prefs) =
+        runCatching { JSONArray(prefs.pendingLocalFocus) }.getOrDefault(JSONArray())
+
+    /** The running phone-only session ends now (stopped early, or the PC's took over). */
+    @Synchronized
+    private fun endLocal(prefs: Prefs) {
+        val arr = localSessions(prefs)
+        val id = localId(prefs)
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            if (o.optString("id") == id && !o.has("end")) o.put("end", System.currentTimeMillis())
+        }
+        prefs.pendingLocalFocus = arr.toString()
+    }
+
+    /** Phone-only sessions that are over, ready to send to the PC. */
+    fun finishedLocal(prefs: Prefs, nowMs: Long): JSONArray {
+        val out = JSONArray()
+        val arr = localSessions(prefs)
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            if (o.optLong("end", o.optLong("planned_end")) <= nowMs) out.put(o)
+        }
+        return out
+    }
+
+    /** Forget sessions / blocks the PC has confirmed receiving (by id). */
+    @Synchronized
+    fun sent(prefs: Prefs, sessionIds: Set<String>, blockIds: Set<String>) {
+        fun drop(json: String, ids: Set<String>): String {
+            val arr = runCatching { JSONArray(json) }.getOrDefault(JSONArray())
+            val keep = JSONArray()
+            for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { if (it.optString("id") !in ids) keep.put(it) }
+            return keep.toString()
+        }
+        prefs.pendingLocalFocus = drop(prefs.pendingLocalFocus, sessionIds)
+        prefs.pendingBlocks = drop(prefs.pendingBlocks, blockIds)
+    }
+
+    @Synchronized
     fun recordBlock(context: Context, pkg: String) {
         val prefs = Prefs(context)
         val arr = runCatching { JSONArray(prefs.pendingBlocks) }.getOrDefault(JSONArray())

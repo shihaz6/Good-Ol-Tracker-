@@ -260,6 +260,7 @@ def sync(conn, dev_id: str, body: dict, now=None, ip=None) -> dict:
             u_rows.append((dev_id, ts))
     conn.executemany("INSERT OR IGNORE INTO phone_unlocks (device, ts) VALUES (?, ?)", u_rows)
     conn.commit()
+    focus.record_phone_sessions(conn, body.get("local_focus") or [], dev_id, now=now)  # before the blocks
     focus.record_phone_blocks(conn, body.get("focus_blocks") or [])
     client = body.get("client") if isinstance(body.get("client"), dict) else {}
     extra = {"last_ip": ip} if ip else {}

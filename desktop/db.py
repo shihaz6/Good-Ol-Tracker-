@@ -216,6 +216,12 @@ def _migrate(conn) -> None:
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_client ON sessions(client_id)"
     )
+    fcols = {row[1] for row in conn.execute("PRAGMA table_info(focus_sessions)")}
+    if "client_id" not in fcols:  # focus sessions the phone ran on its own (PC unreachable)
+        conn.execute("ALTER TABLE focus_sessions ADD COLUMN client_id TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_focus_sessions_client ON focus_sessions(client_id)"
+    )
     # One-off repair (2026-11-08): a bug stored "no scroll data" as 0%. A real reading is
     # never 0 (the first screen already counts), so 0 means unknown.
     if get_meta(conn, "fix_scroll_zero") is None:

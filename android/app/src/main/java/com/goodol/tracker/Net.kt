@@ -224,6 +224,14 @@ object Net {
         val now = System.currentTimeMillis()
         val from = prefs.cursorMs.takeIf { it > 0 } ?: (now - BACKFILL_MS)
         val data = Usage.collect(context, from, now)
+        // Apps blocked during a phone-only focus session that's still running wait until that
+        // session is over and sent with them; otherwise the PC has no session to file them under.
+        val localFrom = if (prefs.focusLocal && prefs.focusActive) (prefs.focusStartSec * 1000).toLong() else Long.MAX_VALUE
+        val allBlocks = runCatching { JSONArray(prefs.pendingBlocks) }.getOrDefault(JSONArray())
+        val blocks = JSONArray()
+        for (j in 0 until allBlocks.length()) allBlocks.optJSONObject(j)?.let { if (it.optLong("ts") < localFrom) blocks.put(it) }
+        val localFocus = Focus.finishedLocal(prefs, now)
+        fun ids(a: JSONArray) = (0 until a.length()).mapNotNull { a.optJSONObject(it)?.optString("id") }.toSet()
         var sent = 0
         val chunks = data.sessions.chunked(BATCH).ifEmpty { listOf(emptyList()) }
         for ((i, chunk) in chunks.withIndex()) {
@@ -234,7 +242,8 @@ object Net {
                     }
                 })
                 .put("unlocks", JSONArray().apply { if (i == 0) data.unlocks.forEach { put(it) } })
-                .put("focus_blocks", if (i == 0) JSONArray(prefs.pendingBlocks) else JSONArray())
+                .put("focus_blocks", if (i == 0) blocks else JSONArray())
+                .put("local_focus", if (i == 0) localFocus else JSONArray())
                 .put("client", JSONObject().put("version", BuildConfig.VERSION_NAME)
                     .put("behind", (now - from) / 1000)
                     .put("blocking", Focus.blockingEnabled(context))
@@ -248,7 +257,7 @@ object Net {
                 throw NetError("The PC didn't recognise this phone just now; will retry")
             }
             if (code != 200) throw NetError(res.optString("error", "PC answered $code"))
-            if (i == 0) prefs.pendingBlocks = "[]"
+            if (i == 0) Focus.sent(prefs, ids(localFocus), ids(blocks))
             Focus.applyReply(context, endFocusStoppedHere(pc, prefs, res))  // focus on/off, apps to block, alert to show
             sent += chunk.size
             // Next time, start at the last session sent: if it was still running, it's re-sent

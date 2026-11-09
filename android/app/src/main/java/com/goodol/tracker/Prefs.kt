@@ -90,6 +90,12 @@ class Prefs(context: Context) {
         get() = p.getString("pending_blocks", "[]") ?: "[]"
         set(v) = p.edit().putString("pending_blocks", v).apply()
 
+    /** Focus sessions run on the phone alone (PC unreachable), not yet sent to the PC:
+     *  JSON array of {id, start, planned_end, end?, label} in ms. */
+    var pendingLocalFocus: String
+        get() = p.getString("pending_local_focus", "[]") ?: "[]"
+        set(v) = p.edit().putString("pending_local_focus", v).apply()
+
     /** Limits, bedtime and schedules from the PC (JSON), kept so they work offline. */
     var wellbeing: String
         get() = p.getString("wellbeing", null) ?: DEFAULT_WELLBEING
