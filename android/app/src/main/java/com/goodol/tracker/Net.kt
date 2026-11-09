@@ -19,7 +19,9 @@ import java.security.SecureRandom
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
-data class PcAddress(val host: String, val port: Int, val name: String, val network: Network?)
+/** knowsUs = false: it's the PC we paired with (same PC id) but it no longer has our token. */
+data class PcAddress(val host: String, val port: Int, val name: String, val network: Network?,
+                     val knowsUs: Boolean = true)
 
 class NetError(message: String) : Exception(message)
 
@@ -98,6 +100,7 @@ object Net {
             }
             val deadline = System.currentTimeMillis() + LISTEN_MS
             val buf = ByteArray(2048)
+            var forgotUs: PcAddress? = null  // our PC answered, but without proof: it was unpaired
             while (System.currentTimeMillis() < deadline) {
                 for ((s, net) in sockets) {
                     val pkt = DatagramPacket(buf, buf.size)
@@ -106,13 +109,16 @@ object Net {
                     if (reply.optString("t") != "got-here") continue
                     val host = pkt.address.hostAddress ?: continue
                     if (!pkt.address.isSiteLocalAddress) continue
-                    if (token != null) {
-                        if (reply.optString("proof") != hmacHex(token, nonce)) continue  // not our PC
+                    val pc = PcAddress(host, reply.optInt("port", 47323), reply.optString("name", "PC"), net)
+                    if (token != null && reply.optString("proof") != hmacHex(token, nonce)) {
+                        val ourPc = prefs.pcId
+                        if (!ourPc.isNullOrEmpty() && reply.optString("pc") == ourPc) forgotUs = pc.copy(knowsUs = false)
+                        continue  // not our PC (or our PC, unpaired): keep listening for a real answer
                     }
-                    return PcAddress(host, reply.optInt("port", 47323), reply.optString("name", "PC"), net)
+                    return pc
                 }
             }
-            return null
+            return forgotUs
         } finally {
             sockets.forEach { it.first.close() }
         }
@@ -153,6 +159,15 @@ object Net {
             }
         }
         val pc = discover(context, prefs) ?: return null
+        if (!pc.knowsUs) {
+            // Our PC is here but doesn't know this phone any more (unpaired on the dashboard).
+            // Used to look like "PC not found" forever. Confirm with the PC, then ask to reconnect.
+            val unpaired = runCatching { request(pc, "/phone/hello", token = token, timeoutMs = 5000).first == 401 }
+                .getOrDefault(false)
+            if (!unpaired) return null
+            prefs.forget()
+            throw NetError("Your PC no longer knows this phone (it was disconnected on the dashboard). Connect again.")
+        }
         prefs.lastHost = pc.host
         prefs.lastPort = pc.port
         return pc
