@@ -45,6 +45,15 @@ object Net {
             .any { n.startsWith(it) }
     }
 
+    /** The Wi-Fi Network that owns this local address (null for the hotspot side, which
+     *  Android doesn't expose as a Network; plain routing reaches it fine). */
+    private fun networkFor(context: Context, local: InetAddress): Network? {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        return wifiNetworks(context).firstOrNull { n ->
+            cm.getLinkProperties(n)?.linkAddresses?.any { it.address == local } == true
+        }
+    }
+
     private fun hmacHex(key: String, msg: String): String {
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(key.toByteArray(), "HmacSHA256"))
@@ -71,7 +80,9 @@ object Net {
                     val addr = ia.address as? Inet4Address ?: continue
                     if (!addr.isSiteLocalAddress) continue  // never mobile-data addresses
                     val s = DatagramSocket(InetSocketAddress(addr, 0)).apply { broadcast = true; soTimeout = 200 }
-                    sockets.add(s to null)
+                    // Remember the Wi-Fi Network too: on a Wi-Fi without internet Android sends
+                    // unbound traffic over mobile data, so HTTP to the PC must be bound to it.
+                    sockets.add(s to runCatching { networkFor(context, addr) }.getOrNull())
                     ia.broadcast?.let { targets.add(it) }
                 }
             }
@@ -194,7 +205,13 @@ object Net {
                     .put("blocking", Focus.blockingEnabled(context))
                     .put("private_dns", Dns.filterHost(context) ?: JSONObject.NULL))
             val (code, res) = request(pc, "/phone/sync", body, prefs.token)
-            if (code == 401) { prefs.forget(); throw NetError("The PC no longer knows this phone. Connect again.") }
+            if (code == 401) {
+                // Only forget the pairing if the PC confirms it: a one-off 401 used to wipe it.
+                val confirmed = runCatching { request(pc, "/phone/hello", token = prefs.token, timeoutMs = 5000).first == 401 }
+                    .getOrDefault(false)
+                if (confirmed) { prefs.forget(); throw NetError("The PC no longer knows this phone. Connect again.") }
+                throw NetError("The PC didn't recognise this phone just now; will retry")
+            }
             if (code != 200) throw NetError(res.optString("error", "PC answered $code"))
             if (i == 0) prefs.pendingBlocks = "[]"
             Focus.applyReply(context, res)  // focus on/off, apps to block, alert to show

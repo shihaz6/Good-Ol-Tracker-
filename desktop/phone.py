@@ -50,8 +50,9 @@ MAX_BODY = 4_000_000
 MAX_SESSIONS = 2000       # per sync request
 MAX_SESSION_SECONDS = 12 * 3600
 
-_lock = threading.Lock()
+_lock = threading.RLock()  # re-entrant: _load() is called both inside and outside it
 _pending = {}             # request id -> {device, name, code, ip, ts, status, token}
+_cache = {"path": None, "data": None}  # phone_devices.json, kept in memory (see _load)
 
 
 class PhoneError(ValueError):
@@ -64,21 +65,51 @@ def _path():
     return db.DATA_DIR / "phone_devices.json"
 
 
+def _read_file() -> dict:
+    """The file on disk. Missing = no phones yet. Unreadable (Windows briefly locks a file
+    while it's being replaced, or an antivirus scans it) is retried, and never treated as
+    "no phones": that would answer 401 and make the phone throw its pairing away."""
+    path = _path()
+    for attempt in range(20):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError):
+            if attempt == 19:
+                raise PhoneError("couldn't read the phone list; try again") from None
+            time.sleep(0.05)
+    return {}
+
+
 def _load() -> dict:
-    try:
-        data = json.loads(_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        data = {}
-    data.setdefault("pc_id", secrets.token_hex(8))
-    data.setdefault("devices", {})
-    return data
+    """The phones and their tokens. Read from disk once and kept in memory: every sync
+    used to re-read the file while other requests were rewriting it, and on Windows those
+    reads fail now and then, which made a paired phone look unknown."""
+    with _lock:
+        path = _path()
+        if _cache["path"] != path or _cache["data"] is None:
+            data = _read_file()
+            data.setdefault("pc_id", secrets.token_hex(8))
+            data.setdefault("devices", {})
+            _cache.update(path=path, data=data)
+        return json.loads(json.dumps(_cache["data"]))  # a copy: callers may change it
 
 
 def _save(data) -> None:
-    db.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = _path().with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(_path())
+    with _lock:
+        db.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _path().with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        for attempt in range(20):  # Windows: replace fails while someone has the file open
+            try:
+                tmp.replace(_path())
+                break
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.05)
+        _cache.update(path=_path(), data=json.loads(json.dumps(data)))
 
 
 def _device_for_token(token: str):
@@ -193,7 +224,7 @@ def _num(v, name):
     return f
 
 
-def sync(conn, dev_id: str, body: dict, now=None) -> dict:
+def sync(conn, dev_id: str, body: dict, now=None, ip=None) -> dict:
     """body: {sessions: [{pkg, label, start, end}] (ms), unlocks: [ms], client: {...}}"""
     now = now or time.time()
     sessions = body.get("sessions") or []
@@ -211,7 +242,10 @@ def sync(conn, dev_id: str, body: dict, now=None) -> dict:
             raise PhoneError("bad package name")
         label = str(s.get("label") or pkg)[:100]
         start, end = _num(s.get("start"), "start") / 1000, _num(s.get("end"), "end") / 1000
-        if not (0 < start < end <= now + 120) or end - start > MAX_SESSION_SECONDS:
+        # A phone clock a few minutes ahead of the PC's used to drop the running session for
+        # good (the phone had already moved past it). Cap it at "now"; the next sync extends it.
+        end = min(end, now)
+        if not (0 < start < end) or end - start > MAX_SESSION_SECONDS:
             continue  # clock oddities: skip that one row, keep the rest
         rows.append((start, end, pkg, label, f"phone:{dev_id}:{pkg}@{int(round(start * 1000))}"))
     # The phone re-sends the session that was still running last time: keep the longest end.
@@ -228,7 +262,8 @@ def sync(conn, dev_id: str, body: dict, now=None) -> dict:
     conn.commit()
     focus.record_phone_blocks(conn, body.get("focus_blocks") or [])
     client = body.get("client") if isinstance(body.get("client"), dict) else {}
-    _touch(dev_id, last_sync=now, version=str(client.get("version", ""))[:20],
+    extra = {"last_ip": ip} if ip else {}
+    _touch(dev_id, **extra, last_sync=now, version=str(client.get("version", ""))[:20],
            behind=client.get("behind") if isinstance(client.get("behind"), (int, float)) else None,
            adult_filter=str(client.get("private_dns") or "")[:100] or None,
            blocking=bool(client.get("blocking")))
@@ -397,6 +432,15 @@ class PhoneHandler(BaseHTTPRequestHandler):
         return data
 
     def do_GET(self):
+        try:
+            return self._get()
+        except PhoneError as exc:
+            return self._send(503, {"error": str(exc)})
+        except Exception:
+            log.exception("phone request %s failed", self.path)
+            return self._send(500, {"error": "the PC hit an error; see data/tracker.log"})
+
+    def _get(self):
         if not self._allowed():
             return self._send(403, {"error": "forbidden"})
         url = urlsplit(self.path)
@@ -433,10 +477,9 @@ class PhoneHandler(BaseHTTPRequestHandler):
                 body = self._body()
                 conn = db.connect()
                 try:
-                    result = sync(conn, dev_id, body)
+                    result = sync(conn, dev_id, body, ip=self._ip())
                 finally:
                     conn.close()
-                _touch(dev_id, last_ip=self._ip())
                 return self._send(200, result)
             if self.path == "/phone/focus":
                 dev_id, _ = _device_for_token(self.headers.get("X-Phone-Token", ""))
@@ -450,6 +493,9 @@ class PhoneHandler(BaseHTTPRequestHandler):
                     conn.close()
         except (PhoneError, ValueError, TypeError) as exc:
             return self._send(400, {"error": str(exc) or "bad request"})
+        except Exception:  # answer instead of dropping the connection (the phone saw "unexpected end of stream")
+            log.exception("phone request %s failed", self.path)
+            return self._send(500, {"error": "the PC hit an error; see data/tracker.log"})
         self._send(404, {"error": "not found"})
 
 

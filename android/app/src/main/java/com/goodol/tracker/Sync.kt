@@ -58,7 +58,7 @@ object Pairing {
         val prefs = Prefs(context)
         prefs.forget()
         onState(PairState.Searching)
-        val pc = Net.discover(context, prefs)
+        val pc = runCatching { Net.discover(context, prefs) }.getOrNull()  // a network error here used to crash the app
         if (pc == null) {
             onState(PairState.Failed(
                 "Couldn't find the PC. Is the laptop on this phone's hotspot (or the same Wi-Fi), " +

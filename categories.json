@@ -168,7 +168,8 @@
     "claude.ai": "content",
     "chatgpt.com": "content",
     "gemini.google.com": "content",
-    "porsche.com": "Other"
+    "porsche.com": "Other",
+    "meta.ai": "Study"
   },
 
   "channels": {
@@ -339,6 +340,7 @@
     "com.xiaomi.mipicks": "Other",
     "com.android.deskclock": "Other",
     "com.miui.calculator": "Other",
-    "com.goodol.tracker": "Other"
+    "com.goodol.tracker": "Other",
+    "com.microsoft.skydrive": "Study"
   }
 }
