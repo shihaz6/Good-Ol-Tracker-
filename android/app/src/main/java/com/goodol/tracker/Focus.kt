@@ -67,6 +67,12 @@ object Focus {
     fun start(context: Context, minutes: Int, label: String = ""): String {
         val prefs = Prefs(context)
         return try {
+            if (prefs.stoppedFocusId != 0L) {
+                // An old session you ended here offline is still running on the PC: the PC
+                // would just hand that one back. End it there first, then start the new one.
+                Net.focusAction(context, prefs, JSONObject().put("action", "stop"))
+                prefs.stoppedFocusId = 0L
+            }
             val res = Net.focusAction(context, prefs, JSONObject().put("action", "start").put("minutes", minutes).put("label", label))
             applyReply(context, res)
             "Focus started for $minutes min."
@@ -83,9 +89,13 @@ object Focus {
         return try {
             applyReply(context, Net.focusAction(context, prefs, JSONObject().put("action", "stop")))
             prefs.clearFocus()
+            prefs.stoppedFocusId = 0L
             "Focus ended."
         } catch (e: Exception) {
-            prefs.clearFocus()  // never lock you out: end it here; the PC's session runs out on its own
+            // Never lock you out: end it here, and remember it so the next sync ends it on the
+            // PC too (it used to switch focus straight back on).
+            if (prefs.focusId > 0L) prefs.stoppedFocusId = prefs.focusId
+            prefs.clearFocus()
             "Ended on the phone (PC not reachable)."
         }
     }

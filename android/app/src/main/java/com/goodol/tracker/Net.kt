@@ -195,6 +195,26 @@ object Net {
         return res
     }
 
+    /** If you ended a focus session on the phone while the PC was away and the PC still has
+     *  it running, end it on the PC now rather than letting this reply switch it back on. */
+    private fun endFocusStoppedHere(pc: PcAddress, prefs: Prefs, res: JSONObject): JSONObject {
+        val stopped = prefs.stoppedFocusId
+        if (stopped == 0L) return res
+        val f = res.optJSONObject("focus")
+        if (f == null || f.optLong("id") != stopped) {
+            prefs.stoppedFocusId = 0L  // it's already over on the PC
+            return res
+        }
+        val r = runCatching {
+            request(pc, "/phone/focus", JSONObject().put("action", "stop"), prefs.token, timeoutMs = 5000)
+        }.getOrNull()
+        if (r != null && r.first == 200) {
+            prefs.stoppedFocusId = 0L
+            return r.second
+        }
+        return JSONObject(res.toString()).put("focus", JSONObject.NULL)  // try again next sync
+    }
+
     /** Sends everything since the cursor. Returns how many sessions went over. */
     @Synchronized
     fun sync(context: Context, prefs: Prefs): Int {
@@ -229,7 +249,7 @@ object Net {
             }
             if (code != 200) throw NetError(res.optString("error", "PC answered $code"))
             if (i == 0) prefs.pendingBlocks = "[]"
-            Focus.applyReply(context, res)  // focus on/off, apps to block, alert to show
+            Focus.applyReply(context, endFocusStoppedHere(pc, prefs, res))  // focus on/off, apps to block, alert to show
             sent += chunk.size
             // Next time, start at the last session sent: if it was still running, it's re-sent
             // with the same start (the PC just extends it). Nothing before it is read again.

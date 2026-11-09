@@ -63,6 +63,12 @@ class Prefs(context: Context) {
         get() = p.getBoolean("focus_local", false)
         set(v) = p.edit().putBoolean("focus_local", v).apply()
 
+    /** A PC focus session ended on the phone while the PC was unreachable (0 = none).
+     *  The next sync tells the PC to stop it instead of turning it back on. */
+    var stoppedFocusId: Long
+        get() = p.getLong("stopped_focus_id", 0L)
+        set(v) = p.edit().putLong("stopped_focus_id", v).apply()
+
     val focusActive get() = focusEndSec > System.currentTimeMillis() / 1000.0
 
     fun setFocus(id: Long, start: Double, end: Double, label: String, local: Boolean) {
