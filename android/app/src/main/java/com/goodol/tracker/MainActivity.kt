@@ -214,7 +214,7 @@ private fun TodayCard(data: Triple<Long, Int, List<Pair<String, Long>>>, prefs: 
     val (total, unlocks, top) = data
     val scheme = MaterialTheme.colorScheme
     val pc = runCatching { JSONObject(prefs.today) }.getOrDefault(JSONObject())
-    val fresh = System.currentTimeMillis() - prefs.todayAtMs < 3 * 3600_000
+    val fresh = prefs.todayFresh  // not yesterday's numbers after midnight
     val productive = pc.optLong("productive", -1).takeIf { it >= 0 && fresh }
     val exam = pc.optJSONObject("next_exam")?.takeIf { fresh }
     Panel {
@@ -357,7 +357,7 @@ fun RulesCard(tick: Int) {
 
     Panel {
         Kicker("Goals & limits")
-        today.optJSONArray("goals")?.let { goals ->
+        today.optJSONArray("goals")?.takeIf { prefs.todayIsToday }?.let { goals ->
             for (i in 0 until goals.length()) {
                 val g = goals.getJSONObject(i)
                 val target = g.optLong("target").coerceAtLeast(1)
@@ -384,7 +384,7 @@ fun RulesCard(tick: Int) {
                 Spacer(Modifier.height(6.dp))
                 Bar(v.toFloat() / target, color)
             }
-        } ?: Muted("Goals show up after the first sync with your PC.", Modifier.padding(top = 8.dp))
+        } ?: Muted("Goals show up after the next sync with your PC.", Modifier.padding(top = 8.dp))
 
         s.optJSONObject("limits")?.let { lim ->
             val keys = lim.keys().asSequence().toList()

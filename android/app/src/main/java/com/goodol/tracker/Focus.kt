@@ -15,7 +15,9 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -217,16 +219,18 @@ class NudgeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         NotificationManagerCompat.from(context).cancel(Focus.NUDGE_ID)
         val pending = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val prefs = Prefs(context)
-                when (intent.action) {
-                    Focus.ACTION_START -> Focus.start(context, 25, "Back on track")
-                    Focus.ACTION_SNOOZE -> runCatching { Net.focusAction(context, prefs, JSONObject().put("action", "snooze")) }
-                }
-            } finally {
-                pending.finish()
+        val scope = CoroutineScope(Dispatchers.IO)
+        val work = scope.async {
+            val prefs = Prefs(context)
+            when (intent.action) {
+                Focus.ACTION_START -> Focus.start(context, 25, "Back on track")
+                Focus.ACTION_SNOOZE -> runCatching { Net.focusAction(context, prefs, JSONObject().put("action", "snooze")) }
             }
+        }
+        // Finding a slow PC can take longer than Android lets a button tap run (~10 s), which
+        // could get the app killed. Hand the tap back after 8 s; the work carries on.
+        scope.launch {
+            try { withTimeoutOrNull(8_000) { runCatching { work.await() } } } finally { pending.finish() }
         }
     }
 }

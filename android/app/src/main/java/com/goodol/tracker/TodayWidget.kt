@@ -17,7 +17,7 @@ class TodayWidget : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
-            try { render(context, manager, ids) } finally { pending.finish() }
+            try { runCatching { render(context, manager, ids) } } finally { pending.finish() }  // an error here used to crash the app
         }
     }
 
@@ -38,7 +38,7 @@ class TodayWidget : AppWidgetProvider() {
             views.setTextViewText(R.id.w_unlocks, "$unlocks unlocks")
 
             val today = runCatching { JSONObject(prefs.today) }.getOrDefault(JSONObject())
-            val fresh = System.currentTimeMillis() - prefs.todayAtMs < 3 * 3600_000
+            val fresh = prefs.todayFresh  // not yesterday's numbers after midnight
             val prod = today.optLong("productive", -1)
             views.setTextViewText(R.id.w_pc, if (prod >= 0 && fresh) Guard.fmt(prod * 1000) else "–")
 

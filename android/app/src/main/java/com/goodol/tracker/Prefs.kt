@@ -109,6 +109,15 @@ class Prefs(context: Context) {
         get() = p.getLong("today_at", 0L)
         set(v) = p.edit().putLong("today_at", v).apply()
 
+    /** Those numbers are from today (not yesterday's, still cached after midnight). */
+    val todayIsToday: Boolean
+        get() = todayAtMs > 0 && java.time.Instant.ofEpochMilli(todayAtMs)
+            .atZone(java.time.ZoneId.systemDefault()).toLocalDate() == java.time.LocalDate.now()
+
+    /** ...and recent enough to show as "today so far". */
+    val todayFresh: Boolean
+        get() = todayIsToday && System.currentTimeMillis() - todayAtMs < 3 * 3600_000
+
     /** One-off things already done, e.g. "warn:com.facebook.katana:2026-11-08" (kept 3 days). */
     fun once(key: String): Boolean {
         val set = p.getStringSet("once", emptySet())!!.toMutableSet()
@@ -121,7 +130,13 @@ class Prefs(context: Context) {
     }
 
     fun graceUntil(key: String): Long = p.getLong("grace:$key", 0L)
-    fun setGrace(key: String, until: Long) = p.edit().putLong("grace:$key", until).apply()
+    fun setGrace(key: String, until: Long) {
+        // Each "5 more minutes" used to stay saved forever; drop ones over 2 days old.
+        val old = System.currentTimeMillis() - 2 * 86_400_000L
+        val e = p.edit()
+        p.all.forEach { (k, v) -> if (k.startsWith("grace:") && v is Long && v < old) e.remove(k) }
+        e.putLong("grace:$key", until).apply()
+    }
 
     /** {"date": "...", "used": {package: seconds}}: time on the app's website on the PC today. */
     var pcUsed: String
