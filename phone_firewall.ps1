@@ -3,7 +3,7 @@
 # Public networks (campus, cafe) stay closed.
 #
 # Run once, as administrator:  right-click PowerShell -> Run as administrator, then
-#   powershell -ExecutionPolicy Bypass -File "C:\Users\shihaz shaheem\Desktop\Good ol Tracker\phone_firewall.ps1"
+#   cd to the project folder, then:  powershell -ExecutionPolicy Bypass -File phone_firewall.ps1
 # Undo:  Remove-NetFirewallRule -Group "Good ol Tracker"
 
 $ErrorActionPreference = "Stop"

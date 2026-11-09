@@ -33,7 +33,8 @@ More detail: [docs/architecture.md](docs/architecture.md) (how it fits together)
 
 ## Quick start
 
-Requirements: Windows 10/11, Python 3.10+ (standard library only, no `pip install`; developed on 3.15),
+Requirements: Windows 10/11, Python 3.15 (the tested version; older Python 3 releases may work but are untested; standard
+library only, no `pip install`),
 Brave (or Chrome/Edge). Optional: an Android phone, Voyage/Groq API keys, a Gmail App
 Password.
 
@@ -75,13 +76,18 @@ All of `data\` is gitignored.
 1. **Once, on the PC, as administrator:** `powershell -ExecutionPolicy Bypass -File phone_firewall.ps1`
    (opens TCP 47323 / UDP 47324 on **Private** networks only), then set the network you
    share with the phone (e.g. its hotspot) to **Private** in Windows Wi-Fi settings.
-2. **Build and install the app:**
+2. **Install the app:** download `GoodOlTracker.apk` from the
+   [latest release](https://github.com/shihaz6/Good-Ol-Tracker-/releases/latest), copy it to
+   the phone and open it (allow installing from unknown sources). Or build it yourself. This
+   needs JDK 17 and the Android SDK (e.g. from Android Studio, with `ANDROID_HOME` set):
    ```powershell
    cd android
-   C:\Android\gradle-8.9\bin\gradle.bat --offline assembleRelease
-   C:\Android\sdk\platform-tools\adb.exe install -r app\build\outputs\apk\release\app-release.apk
+   .\gradlew.bat assembleRelease
+   adb install -r app\build\outputs\apk\release\app-release.apk
    ```
-   (Or copy `android\GoodOlTracker.apk` to the phone and open it.)
+   The APK is signed with the Android debug key of the machine that built it, so it's for
+   sideloading only (not the Play Store). An APK built on another machine won't install over
+   one built elsewhere: uninstall the old app first, then pair it with the PC again.
 3. **In the app:** allow *Usage access* → **Connect to PC** → allow the request with the same
    4-digit code on the dashboard's **Phone** card.
 4. **Also in the app:** switch on *App blocking* (Accessibility), *Alerts*, the *Adult content
