@@ -321,6 +321,10 @@ def _on(domain: str, domains) -> bool:
     return any(d == x or d.endswith("." + x) for x in domains)
 
 
+def _limit_allow(domains, rules) -> list:
+    return focus.allowed(domains, rules) if domains else []
+
+
 def limit_usage(conn, now=None, rules=None) -> list:
     """Each daily limit with today's use on the phone (the app) and the PC (its website).
     Study time doesn't count: on the PC only non-productive time on the site is added, so a
@@ -335,12 +339,13 @@ def limit_usage(conn, now=None, rules=None) -> list:
     out = []
     for pkg, minutes in lim.items():
         domains = APP_SITES.get(pkg, [])
+        allow = _limit_allow(domains, rules)
         phone_s = sum(it.seconds for it in items if it.source == "phone" and it.title.lower() == pkg)
         pc_s = sum(it.seconds for it in items if it.source == "browser" and _on(it.app, domains)
-                   and it.category not in rules.productive)
+                   and not _on(it.app, allow) and it.category not in rules.productive)
         label = next((it.app for it in items if it.source == "phone" and it.title.lower() == pkg), None)
         out.append({"pkg": pkg, "label": label or (domains[0] if domains else pkg), "minutes": minutes,
-                    "domains": domains, "phone": round(phone_s), "pc": round(pc_s), "used": round(phone_s + pc_s),
+                    "domains": domains, "allow": allow, "phone": round(phone_s), "pc": round(pc_s), "used": round(phone_s + pc_s),
                     "key": f"limit:{pkg}|{date.fromtimestamp(now).isoformat()}"})
     return out
 
@@ -359,7 +364,7 @@ def pc_state(conn, now=None, rules=None) -> dict:
     for u in limit_usage(conn, now, rules):
         if not u["domains"]:
             continue
-        info = {"label": u["label"], "domains": u["domains"], "used": u["used"], "minutes": u["minutes"],
+        info = {"label": u["label"], "domains": u["domains"], "allow": u["allow"], "used": u["used"], "minutes": u["minutes"],
                 "key": u["key"], "until": midnight, "grace_used": u["key"] in graces}
         if u["used"] >= u["minutes"] * 60:
             if not graced(u["key"]):
@@ -375,7 +380,7 @@ def pc_state(conn, now=None, rules=None) -> dict:
             key = f"bed|{win[0].date().isoformat()}"
             if not graced(key):
                 bedtime = {"until": win[1].timestamp(), "end": bed["end"], "key": key, "grace_used": key in graces,
-                           "domains": focus.settings()["block"]}
+                           "domains": (blk := focus.settings()["block"]), "allow": focus.allowed(blk, rules)}
         elif bed["wind_down"]:
             start_today = dt.replace(hour=int(bed["start"][:2]), minute=int(bed["start"][3:]), second=0, microsecond=0)
             start_at = start_today if start_today > dt else start_today + timedelta(days=1)

@@ -36,6 +36,23 @@ def default_block(rules=None) -> list:
     return sorted(set(sites + EXTRA_DEFAULT_BLOCK))
 
 
+def allowed(block, rules=None) -> list:
+    """Sub-sites that stay open although their parent site is blocked: any site rule in
+    categories.json under a blocked domain whose own category isn't a distracting one,
+    e.g. "business.facebook.com": "Work" keeps Meta Business Suite open while facebook.com
+    is blocked (focus, bedtime and daily limits alike)."""
+    rules = rules or categorize.Rules()
+    block = set(block or [])
+    out = set()
+    for site, cat in rules.sites.items():
+        if cat in DEFAULT_BLOCK_CATEGORIES or site in block:
+            continue
+        parts = site.split(".")
+        if any(".".join(parts[i:]) in block for i in range(1, len(parts) - 1)):
+            out.add(site)
+    return sorted(out)
+
+
 def normalize_domain(value) -> str:
     d = str(value or "").strip().lower()
     d = re.sub(r"^[a-z]+://", "", d).split("/")[0].split(":")[0]
@@ -105,7 +122,7 @@ def current(conn, now=None):
         return None
     s = settings()
     return {"id": row[0], "start": row[1], "end": row[2], "label": row[3], "block": s["block"],
-            "adult": s["adult"] != "off"}
+            "allow": allowed(s["block"]), "adult": s["adult"] != "off"}
 
 
 def start(conn, minutes=None, label="", now=None) -> dict:

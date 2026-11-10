@@ -260,6 +260,7 @@ chrome.notifications.onButtonClicked.addListener((id, index) => {
 const FOCUS_RULE_BASE = 1000; // DNR rule ids FOCUS_RULE_BASE + i
 const ADULT_RULE_LIST = 1;    // adult filter: known sites
 const ADULT_RULE_WORDS = 2;   // adult filter: words in the address
+const ALLOW_RULE = 10;        // work sub-sites of blocked sites (focus/bedtime/limit "allow")
 
 const getFocus = async () => {
   const f = await getLocal("focus", null);
@@ -297,9 +298,10 @@ function blockReason(url, focus, adultMode, pc) {
   if (!u || !/^https?:$/.test(u.protocol)) return null;
   const host = domainOf(u.hostname);
   if (adultActive(adultMode, focus) && isAdultHost(host)) return "adult";
-  if (focus && focus.block.some((d) => host === d || host.endsWith("." + d))) return "focus";
-  if (pc?.bedtime && onDomain(host, pc.bedtime.domains)) return "bedtime";
-  if (pc?.limits?.some((l) => onDomain(host, l.domains))) return "limit";
+  // `allow`: work sub-sites of a blocked site (e.g. business.facebook.com under facebook.com).
+  if (focus && onDomain(host, focus.block) && !onDomain(host, focus.allow)) return "focus";
+  if (pc?.bedtime && onDomain(host, pc.bedtime.domains) && !onDomain(host, pc.bedtime.allow)) return "bedtime";
+  if (pc?.limits?.some((l) => onDomain(host, l.domains) && !onDomain(host, l.allow))) return "limit";
   return null;
 }
 
@@ -395,6 +397,14 @@ async function updateBlockRules() {
     id: LIMIT_RULE_BASE + i, priority: 1, action: redirectTo("limit"),
     condition: { regexFilter: "^https?://.*", requestDomains: [d], resourceTypes: ["main_frame"] },
   }));
+  // Work sub-sites stay open: an allow rule beats a redirect of the same priority (the
+  // adult filter, priority 2, still wins).
+  const allow = [...new Set([...(focus?.allow || []), ...(pc.bedtime?.allow || []),
+    ...pc.limits.flatMap((l) => l.allow || [])])];
+  if (allow.length) addRules.push({
+    id: ALLOW_RULE, priority: 1, action: { type: "allow" },
+    condition: { requestDomains: allow.slice(0, 500), resourceTypes: ["main_frame"] },
+  });
   const existing = (await chrome.declarativeNetRequest.getDynamicRules()).map((r) => r.id);
   try {
     await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: existing, addRules });

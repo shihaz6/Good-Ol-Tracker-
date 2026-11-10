@@ -264,6 +264,14 @@ class FocusTest(TempData):
         with self.assertRaises(focus.FocusError):
             focus.save_settings({"minutes": 1})
 
+    def test_work_subsites_of_blocked_sites_stay_open(self):
+        block = focus.settings()["block"]
+        self.assertIn("facebook.com", block)
+        self.assertIn("business.facebook.com", focus.allowed(block))  # "Work" in categories.json
+        self.assertNotIn("facebook.com", focus.allowed(block))
+        self.assertEqual(focus.allowed(block + ["business.facebook.com"]), [])  # blocked on purpose
+        self.assertIn("allow", focus.start(self.conn, 25))
+
     def test_adult_filter_setting(self):
         self.assertEqual(focus.settings()["adult"], "focus")  # on during focus by default
         focus.start(self.conn, 25)

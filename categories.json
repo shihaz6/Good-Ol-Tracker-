@@ -84,7 +84,12 @@
     "LockApp.exe": "Other",
     "StartMenuExperienceHost.exe": "Other",
     "Notepad.exe": "Other",
-    "SnippingTool.exe": "Other"
+    "SnippingTool.exe": "Other",
+    "MaxPayne3.exe": "Entertainment",
+    "GTAIV.exe": "Entertainment",
+    "pcaui.exe": "Other",
+    "QuickSFV.EXE": "Other",
+    "utweb.exe": "Entertainment"
   },
 
   "sites": {
@@ -140,6 +145,8 @@
 
     "linkedin.com": "Social",
     "facebook.com": "Social",
+    "business.facebook.com": "Work",
+    "developers.facebook.com": "Work",
     "instagram.com": "Social",
     "x.com": "Social",
     "twitter.com": "Social",
@@ -169,7 +176,17 @@
     "chatgpt.com": "content",
     "gemini.google.com": "content",
     "porsche.com": "Other",
-    "meta.ai": "Study"
+    "meta.ai": "Study",
+    "gamedrive.org": "Entertainment",
+    "dashboard.ngrok.com": "Coding",
+    "login.ngrok.com": "Coding",
+    "1337x.to": "Entertainment",
+    "esupply.dubai.gov.ae": "Work",
+    "courseweb.sliit.lk": "Study",
+    "namecheap.com": "Browsing",
+    "cart.godaddy.com": "Browsing",
+    "countryhome.ae": "Browsing",
+    "artofteeth.ae": "Browsing"
   },
 
   "channels": {
@@ -253,7 +270,17 @@
   },
 
   "pages": {
-    "https://www.google.com/search?q=what+are+the+main+reasons+for+brain+tumor": "Browsing"
+    "https://www.google.com/search?q=what+are+the+main+reasons+for+brain+tumor": "Browsing",
+    "https://www.google.com/maps/place/UAE/@7.616457,79.8398645,7.18z/data=!4m2!3m1!1s0x3e5e48dfb1ab12bd:0x33d32f56c0080aa7?entry=ttu&g_ep=EgoyMDI2MTEwNC4wIKXMDSoASAFQAw%3D%3D": "Work",
+    "https://www.google.com/maps/place/United+Arab+Emirates/@24.109466,52.263973,7.58z/data=!4m6!3m5!1s0x3e5e48dfb1ab12bd:0x33d32f56c0080aa7!8m2!3d23.424076!4d53.847818!16zL20vMGoxejg?entry=ttu&g_ep=EgoyMDI2MTEwNC4wIKXMDSoASAFQAw%3D%3D": "Work",
+    "https://www.google.com/maps/place/United+Arab+Emirates/@24.3361148,51.3061334,7z/data=!3m1!4b1!4m6!3m5!1s0x3e5e48dfb1ab12bd:0x33d32f56c0080aa7!8m2!3d23.424076!4d53.847818!16zL20vMGoxejg?entry=ttu&g_ep=EgoyMDI2MTEwNC4wIKXMDSoASAFQAw%3D%3D": "Work",
+    "https://www.google.com/maps/place/United+Arab+Emirates/@24.6119788,55.1473051,10.04z/data=!4m6!3m5!1s0x3e5e48dfb1ab12bd:0x33d32f56c0080aa7!8m2!3d23.424076!4d53.847818!16zL20vMGoxejg?entry=ttu&g_ep=EgoyMDI2MTEwNC4wIKXMDSoASAFQAw%3D%3D": "Work",
+    "https://www.google.com/maps/place/United+Arab+Emirates/@24.6406101,55.1490488,10.3z/data=!4m6!3m5!1s0x3e5e48dfb1ab12bd:0x33d32f56c0080aa7!8m2!3d23.424076!4d53.847818!16zL20vMGoxejg?entry=ttu&g_ep=EgoyMDI2MTEwNC4wIKXMDSoASAFQAw%3D%3D": "Work",
+    "https://www.google.com/maps/place/United+Arab+Emirates/@24.8833936,55.2262383,10.3z/data=!4m6!3m5!1s0x3e5e48dfb1ab12bd:0x33d32f56c0080aa7!8m2!3d23.424076!4d53.847818!16zL20vMGoxejg?entry=ttu&g_ep=EgoyMDI2MTEwNC4wIKXMDSoASAFQAw%3D%3D": "Work",
+    "https://www.google.com/maps/place/United+Arab+Emirates/@24.9939612,55.1703039,10.3z/data=!4m6!3m5!1s0x3e5e48dfb1ab12bd:0x33d32f56c0080aa7!8m2!3d23.424076!4d53.847818!16zL20vMGoxejg?entry=ttu&g_ep=EgoyMDI2MTEwNC4wIKXMDSoASAFQAw%3D%3D": "Work",
+    "https://www.google.com/maps/place/United+Arab+Emirates/@25.0457874,55.1644933,11.28z/data=!4m6!3m5!1s0x3e5e48dfb1ab12bd:0x33d32f56c0080aa7!8m2!3d23.424076!4d53.847818!16zL20vMGoxejg?entry=ttu&g_ep=EgoyMDI2MTEwNC4wIKXMDSoASAFQAw%3D%3D": "Work",
+    "https://www.google.com/maps/place/United+Arab+Emirates/@25.0771536,55.1816249,12.09z/data=!4m6!3m5!1s0x3e5e48dfb1ab12bd:0x33d32f56c0080aa7!8m2!3d23.424076!4d53.847818!16zL20vMGoxejg?entry=ttu&g_ep=EgoyMDI2MTEwNC4wIKXMDSoASAFQAw%3D%3D": "Work",
+    "https://www.google.com/maps/place/United+Arab+Emirates/@25.0917468,55.2518773,11.28z/data=!4m6!3m5!1s0x3e5e48dfb1ab12bd:0x33d32f56c0080aa7!8m2!3d23.424076!4d53.847818!16zL20vMGoxejg?entry=ttu&g_ep=EgoyMDI2MTEwNC4wIKXMDSoASAFQAw%3D%3D": "Work"
   },
 
   "phone_apps": {
@@ -341,6 +368,7 @@
     "com.android.deskclock": "Other",
     "com.miui.calculator": "Other",
     "com.goodol.tracker": "Other",
-    "com.microsoft.skydrive": "Study"
+    "com.microsoft.skydrive": "Study",
+    "com.google.android.gms": "Other"
   }
 }
